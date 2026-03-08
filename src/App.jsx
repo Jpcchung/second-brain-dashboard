@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── Utility helpers ────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -117,7 +117,7 @@ function cleanNote(raw) {
   // Remove trailing filler
   text = text.replace(/,?\s+(?:if that makes sense|you know what I mean|so yeah|or something like that|or whatever|and stuff)\s*\.?\s*$/gim, ".");
   // Clean up doubled spaces from removals
-  text = text.replace(/  +/g, " ");
+  text = text.replace(/ +/g, " ");
 
   // ═══ PHASE 5: Deduplicate ═══
   const deduped = [];
@@ -131,7 +131,7 @@ function cleanNote(raw) {
 
   // ═══ PHASE 6: Normalise structure ═══
   // Bullets
-  text = text.replace(/^[\u2022\u2023\u25E6\u2043\u2219●○◦⁃]\s*/gm, "• ");
+  text = text.replace(/^[\u2022\u2023\u25E6\u2043\u2217●◻◢⁃]\s*/gm, "• ");
   text = text.replace(/^[-*]\s+/gm, "• ");
   text = text.replace(/^(\d+)[.)]\s+/gm, "$1. ");
   // ALL CAPS headers → title case
@@ -153,1011 +153,987 @@ function cleanNote(raw) {
   // Infer action items from strong imperative patterns not already tagged
   text = text.replace(/^•\s+((?:Schedule|Send|Draft|Create|Set up|Write|Prepare|Review|Update|Share|Submit|Confirm|Book|Arrange|Coordinate|Finalize|Complete|Ship|Deploy|Fix|Resolve|Investigate|Research|Reach out|Contact|Email|Ping|Ask|Check|Verify|Test)\s.{8,})/gim, "→ TODO: $1");
   // Infer decisions from "we decided", "agreed to", "going with"
-  text = text.replace(/^•?\s*(?:We (?:decided|agreed)(?: to)?|(?:Going|Went) with|Final call:)\s+(.+)/gim, "★ DECISION: $1");
-  // Infer follow-ups from "@name will", "@name to", "waiting on"
-  text = text.replace(/^•?\s*(?:@\w+\s+(?:will|to|should|needs? to)\s+)(.+)/gim, "→ FOLLOW-UP: $&");
-  text = text.replace(/^•?\s*(?:Waiting on|Blocked by|Pending|Need(?:s)? (?:input|response|approval) from)\s+(.+)/gim, "→ FOLLOW-UP: $&");
-
-  // ═══ PHASE 8: Restructure — gather actions & decisions to bottom ═══
-  const finalLines = text.split("\n");
-  const bodyLines = [];
-  const actionLines = [];
-  const decisionLines = [];
-  const doneLines = [];
-
-  for (const line of finalLines) {
-    if (line.startsWith("→ ")) actionLines.push(line);
-    else if (line.startsWith("★ ")) decisionLines.push(line);
-    else if (line.startsWith("✓ ")) doneLines.push(line);
-    else bodyLines.push(line);
-  }
-
-  // Remove trailing blank lines from body
-  while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === "") bodyLines.pop();
-
-  // Rebuild with sections
-  let result = bodyLines.join("\n");
-  if (decisionLines.length > 0) {
-    result += "\n\n## Decisions\n\n" + decisionLines.join("\n");
-  }
-  if (actionLines.length > 0) {
-    result += "\n\n## Action Items\n\n" + actionLines.join("\n");
-  }
-  if (doneLines.length > 0) {
-    result += "\n\n" + doneLines.join("\n");
-  }
-
-  // ═══ PHASE 9: Final whitespace cleanup ═══
-  result = result.replace(/[ \t]+$/gm, "");
-  result = result.replace(/\n{3,}/g, "\n\n");
-  result = result.replace(/^\n+/, "");
-  // Ensure spacing before headers
-  result = result.replace(/([^\n])\n(## )/g, "$1\n\n$2");
-  // Capitalise first letter of bullet content
-  result = result.replace(/^(• )([a-z])/gm, (_, p, c) => p + c.toUpperCase());
-  // Remove orphan bullets (bullet with only 1-2 chars)
-  result = result.replace(/^• .{1,2}\s*$/gm, "");
-
-  return result.trim();
-}
-
-// ─── Rich text renderer ─────────────────────────────────────────────
-function renderInline(text) {
-  if (!text) return null;
-  const parts = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|(#[a-zA-Z0-9_-]+))/g;
-  let lastIndex = 0, match, key = 0;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push(<span key={key++}>{text.slice(lastIndex, match.index)}</span>);
-    if (match[2]) parts.push(<strong key={key++} style={{ fontWeight: 600 }}>{match[2]}</strong>);
-    else if (match[3]) parts.push(<em key={key++} style={{ fontStyle: "italic", color: C.textMuted }}>{match[3]}</em>);
-    else if (match[4]) parts.push(<code key={key++} style={{ background: C.surface, padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" }}>{match[4]}</code>);
-    else if (match[5]) parts.push(<span key={key++} style={{ color: C.accentLight, fontWeight: 500, fontSize: 12 }}>{match[5]}</span>);
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) parts.push(<span key={key++}>{text.slice(lastIndex)}</span>);
-  return parts.length > 0 ? parts : text;
-}
-
-function RichNote({ text, style = {} }) {
-  if (!text) return null;
-  const lines = text.split("\n");
-  const elements = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === "") { elements.push(<div key={i} style={{ height: 10 }} />); continue; }
-    if (line.startsWith("## ")) {
-      elements.push(<div key={i} style={{ fontSize: 14, fontWeight: 700, color: C.accentLight, marginTop: 14, marginBottom: 6, paddingBottom: 4, borderBottom: `1px solid ${C.border}` }}>{line.slice(3)}</div>);
-      continue;
-    }
-    if (line.startsWith("→ ")) {
-      const m = line.match(/^→ ([A-Z-]+):\s*(.*)/);
-      if (m) {
-        const lc = m[1] === "TODO" ? C.amber : m[1] === "ACTION" ? C.red : m[1].includes("FOLLOW") ? C.blue : C.accent;
-        elements.push(
-          <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 10px", marginBottom: 4, borderRadius: 8, background: `${lc}10`, borderLeft: `3px solid ${lc}` }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: lc, background: `${lc}20`, padding: "1px 6px", borderRadius: 4, flexShrink: 0, marginTop: 2 }}>{m[1]}</span>
-            <span style={{ fontSize: 13, lineHeight: 1.5 }}>{renderInline(m[2])}</span>
-          </div>
-        );
-      } else {
-        elements.push(<div key={i} style={{ padding: "4px 10px", marginBottom: 3, borderLeft: `3px solid ${C.amber}`, fontSize: 13, lineHeight: 1.5 }}>{renderInline(line.slice(2))}</div>);
-      }
-      continue;
-    }
-    if (line.startsWith("★ ")) {
-      const content = line.replace(/^★\s*DECISION:\s*/, "");
-      elements.push(
-        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 12px", marginBottom: 4, borderRadius: 8, background: C.greenBg, borderLeft: `3px solid ${C.green}` }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: C.green, background: `${C.green}20`, padding: "1px 6px", borderRadius: 4, flexShrink: 0, marginTop: 2 }}>DECISION</span>
-          <span style={{ fontSize: 13, lineHeight: 1.5, fontWeight: 500 }}>{renderInline(content)}</span>
-        </div>
-      );
-      continue;
-    }
-    if (line.startsWith("✓ ")) {
-      elements.push(<div key={i} style={{ fontSize: 13, lineHeight: 1.5, padding: "2px 10px", color: C.textDim, textDecoration: "line-through", display: "flex", gap: 6, alignItems: "center" }}><span style={{ color: C.green }}>✓</span> {line.slice(2)}</div>);
-      continue;
-    }
-    if (line.startsWith("• ")) {
-      elements.push(<div key={i} style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 16, position: "relative", marginBottom: 3 }}><span style={{ position: "absolute", left: 0, color: C.accent }}>•</span>{renderInline(line.slice(2))}</div>);
-      continue;
-    }
-    const numMatch = line.match(/^(\d+)\.\s+(.*)/);
-    if (numMatch) {
-      elements.push(<div key={i} style={{ fontSize: 13, lineHeight: 1.6, paddingLeft: 22, position: "relative", marginBottom: 3 }}><span style={{ position: "absolute", left: 0, color: C.accent, fontWeight: 600, fontSize: 12 }}>{numMatch[1]}.</span>{renderInline(numMatch[2])}</div>);
-      continue;
-    }
-    if (line.startsWith("**") && line.includes("**")) {
-      const sm = line.match(/^\*\*(.+?)\*\*\s*(.*)/);
-      if (sm) { elements.push(<div key={i} style={{ fontSize: 13, fontWeight: 600, color: C.accentLight, marginTop: 10, marginBottom: 2 }}>{sm[1]} <span style={{ fontWeight: 400, color: C.textDim, fontSize: 11 }}>{sm[2]}</span></div>); continue; }
-    }
-    elements.push(<div key={i} style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 4 }}>{renderInline(line)}</div>);
-  }
-  return <div style={style}>{elements}</div>;
-}
-
-// ─── Action extraction ──────────────────────────────────────────────
-function extractActions(text) {
-  const patterns = [/(?:action item|todo|to-do|task|follow[- ]?up|next step)[s]?[:\-–]\s*(.+)/gi, /\[\s*\]\s*(.+)/g, /^•\s*(?:TODO|ACTION|FOLLOW[- ]?UP)[:\s]+(.+)/gim];
-  const items = [];
-  for (const p of patterns) { let m; while ((m = p.exec(text)) !== null) { const t = m[1].trim(); if (t.length > 3 && !items.includes(t)) items.push(t); } }
-  return items;
-}
-function extractTags(text) {
-  const matches = text.match(/#[a-zA-Z0-9_-]+/g) || [];
-  return [...new Set(matches.map((t) => t.toLowerCase()))];
-}
-
-// ─── Colour palette ─────────────────────────────────────────────────
-const C = {
-  bg: "#0f1117", surface: "#1a1d27", surfaceHover: "#222531", card: "#1e2130", cardHover: "#262a3b",
-  border: "#2a2e3d", borderFocus: "#6366f1", text: "#e2e4eb", textMuted: "#8b8fa3", textDim: "#5c6078",
-  accent: "#6366f1", accentLight: "#818cf8", accentBg: "rgba(99,102,241,0.12)",
-  green: "#22c55e", greenBg: "rgba(34,197,94,0.12)", amber: "#f59e0b", amberBg: "rgba(245,158,11,0.12)",
-  red: "#ef4444", redBg: "rgba(239,68,68,0.12)", blue: "#3b82f6", blueBg: "rgba(59,130,246,0.12)",
-};
-
-const KANBAN_COLS = [
-  { key: "todo", label: "To Do", color: C.amber, bg: C.amberBg },
-  { key: "in_progress", label: "In Progress", color: C.blue, bg: C.blueBg },
-  { key: "done", label: "Done", color: C.green, bg: C.greenBg },
-];
-const PRIORITY_COLORS = {
-  high: { color: C.red, bg: C.redBg, label: "High" },
-  medium: { color: C.amber, bg: C.amberBg, label: "Med" },
-  low: { color: C.green, bg: C.greenBg, label: "Low" },
-};
-
-// ─── Sample data ────────────────────────────────────────────────────
-const SAMPLE_NOTES = [
-  { id: uid(), title: "Product Sync — March 3", body: "## Product Sync\n\nDiscussed Q2 roadmap priorities with the full product team.\n\n## Key Updates\n\n• Mobile app redesign kicks off March 15\n• API v3 migration — need timeline from backend team\n• Customer feedback dashboard MVP due end of month\n• Design system tokens are now live in Figma\n\n## Decisions\n\n★ DECISION: Going with React Native for the mobile rewrite over Flutter\n★ DECISION: API v3 will be a breaking change — 90-day deprecation window\n\n→ ACTION: Schedule design review with Sarah by Friday\n→ FOLLOW-UP: Get API migration estimate from DevOps\n→ TODO: Draft Q2 OKRs and share with leadership\n→ NEXT: Share updated timeline with stakeholders by EOW\n\n#product #q2-planning #roadmap", source: "manual", tags: ["#product", "#q2-planning", "#roadmap"], createdAt: "2026-03-03T10:30:00Z", archived: false },
-  { id: uid(), title: "1:1 with Manager — Feb 28", body: "## Career Growth Check-in\n\nTalked about growth areas and upcoming projects.\n\n• Take lead on the analytics integration project\n• Presentation skills workshop available in April\n• Performance review cycle starts March 20\n\n## Action Items\n\n→ TODO: Write self-review draft by March 18\n→ FOLLOW-UP: Register for presentation workshop\n→ TODO: Set up weekly 1:1 with the analytics team lead\n\n#1on1 #career #growth", source: "manual", tags: ["#1on1", "#career", "#growth"], createdAt: "2026-02-28T14:00:00Z", archived: false },
-  { id: uid(), title: "Slack Standup — March 4", body: "**Sarah Chen** (9:15 AM):\n• Finished the onboarding flow mockups\n• Starting user testing scripts today\n→ TODO: Share mockups in #design-reviews by noon\n\n**Mike R.** (9:22 AM):\n• API rate limiter is deployed to staging\n• Found a bug in the auth token refresh — investigating\n→ ACTION: Fix token refresh bug before release\n\n**Jon** (9:30 AM):\n• Reviewed Q2 budget with finance\n★ DECISION: Approved headcount for 2 more engineers\n→ NEXT: Post job descriptions by Friday\n\n#standup #daily #engineering", source: "slack", tags: ["#standup", "#daily", "#engineering"], createdAt: "2026-03-04T09:30:00Z", archived: false },
-];
-const SAMPLE_ACTIONS = [
-  { id: uid(), text: "Schedule design review with Sarah by Friday", status: "todo", priority: "high", tags: ["#product"], noteId: SAMPLE_NOTES[0].id, createdAt: "2026-03-03T10:30:00Z", dueDate: "2026-03-07" },
-  { id: uid(), text: "Get API migration estimate from DevOps", status: "todo", priority: "medium", tags: ["#product"], noteId: SAMPLE_NOTES[0].id, createdAt: "2026-03-03T10:30:00Z", dueDate: "" },
-  { id: uid(), text: "Draft Q2 OKRs and share with leadership", status: "in_progress", priority: "high", tags: ["#product", "#q2-planning"], noteId: SAMPLE_NOTES[0].id, createdAt: "2026-03-03T10:30:00Z", dueDate: "2026-03-14" },
-  { id: uid(), text: "Share updated timeline with stakeholders by EOW", status: "todo", priority: "medium", tags: ["#product"], noteId: SAMPLE_NOTES[0].id, createdAt: "2026-03-03T10:30:00Z", dueDate: "2026-03-07" },
-  { id: uid(), text: "Write self-review draft by March 18", status: "todo", priority: "high", tags: ["#career"], noteId: SAMPLE_NOTES[1].id, createdAt: "2026-02-28T14:00:00Z", dueDate: "2026-03-18" },
-  { id: uid(), text: "Register for presentation workshop", status: "done", priority: "low", tags: ["#growth"], noteId: SAMPLE_NOTES[1].id, createdAt: "2026-02-28T14:00:00Z", dueDate: "" },
-  { id: uid(), text: "Share mockups in #design-reviews by noon", status: "in_progress", priority: "medium", tags: ["#standup", "#engineering"], noteId: SAMPLE_NOTES[2].id, createdAt: "2026-03-04T09:30:00Z", dueDate: "2026-03-04" },
-  { id: uid(), text: "Fix token refresh bug before release", status: "todo", priority: "high", tags: ["#engineering"], noteId: SAMPLE_NOTES[2].id, createdAt: "2026-03-04T09:30:00Z", dueDate: "" },
-  { id: uid(), text: "Post job descriptions by Friday", status: "todo", priority: "medium", tags: ["#engineering"], noteId: SAMPLE_NOTES[2].id, createdAt: "2026-03-04T09:30:00Z", dueDate: "2026-03-07" },
-];
-
-// ─── Icons ──────────────────────────────────────────────────────────
-const Icon = ({ d, size = 18, color = C.textMuted, style = {} }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={style}><path d={d} /></svg>
-);
-const I = {
-  search: "M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z",
-  plus: "M12 5v14M5 12h14",
-  note: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6",
-  kanban: "M3 3h6v18H3zM9 3h6v12H9zM15 3h6v8h-6z",
-  tag: "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82zM7 7h.01",
-  upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
-  check: "M20 6L9 17l-5-5",
-  x: "M18 6L6 18M6 6l12 12",
-  trash: "M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2",
-  edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
-  clock: "M12 2a10 10 0 100 20 10 10 0 000-20zM12 6v6l4 2",
-  brain: "M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 01-2 2h-4a2 2 0 01-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7zM9 22h6",
-  filter: "M22 3H2l8 9.46V19l4 2v-8.54L22 3z",
-  grip: "M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01",
-  slack: "M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5zM20 10h-1.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5H20c.83 0 1.5.67 1.5 1.5S20.83 10 20 10z",
-  paste: "M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2M9 2h6a1 1 0 011 1v1a1 1 0 01-1 1H9a1 1 0 01-1-1V3a1 1 0 011-1z",
-  eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 9a3 3 0 100 6 3 3 0 000-6z",
-  arrowLeft: "M19 12H5M12 19l-7-7 7-7",
-  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
-  archive: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
-  restore: "M3 12a9 9 0 1018 0 9 9 0 00-18 0zM3 12h4M12 8v4l3 3",
-  sort: "M3 6h7M3 12h5M3 18h3M16 6v12M13 15l3 3 3-3",
-  keyboard: "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8",
-};
-
-// ─── Reusable Components ────────────────────────────────────────────
-const Badge = ({ label, color, bg, onRemove, style = {} }) => (
-  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 9999, fontSize: 11, fontWeight: 600, color, background: bg, whiteSpace: "nowrap", ...style }}>
-    {label}{onRemove && <span onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ cursor: "pointer", marginLeft: 2, opacity: 0.7 }}>×</span>}
-  </span>
-);
-
-const Btn = ({ children, onClick, variant = "default", style = {}, disabled = false, title = "", ...rest }) => {
-  const base = { display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", cursor: disabled ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.15s", opacity: disabled ? 0.5 : 1 };
-  const v = { default: { background: C.surface, color: C.text, border: `1px solid ${C.border}` }, primary: { background: C.accent, color: "#fff" }, ghost: { background: "transparent", color: C.textMuted, padding: "5px 8px" }, danger: { background: C.redBg, color: C.red }, success: { background: C.greenBg, color: C.green } };
-  return <button onClick={disabled ? undefined : onClick} style={{ ...base, ...v[variant], ...style }} title={title} {...rest}>{children}</button>;
-};
-
-const Input = ({ style = {}, ...props }) => (
-  <input {...props} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, outline: "none", ...style }} onFocus={(e) => (e.target.style.borderColor = C.borderFocus)} onBlur={(e) => (e.target.style.borderColor = C.border)} />
-);
-
-const Textarea = ({ style = {}, ...props }) => (
-  <textarea {...props} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", minHeight: 120, ...style }} onFocus={(e) => (e.target.style.borderColor = C.borderFocus)} onBlur={(e) => (e.target.style.borderColor = C.border)} />
-);
-
-const Select = ({ value, onChange, children, style = {} }) => (
-  <select value={value} onChange={onChange} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, outline: "none", cursor: "pointer", ...style }}>{children}</select>
-);
-
-// ─── Toast notification ─────────────────────────────────────────────
-function Toast({ message, onDone }) {
-  useEffect(() => { const t = setTimeout(onDone, 2500); return () => clearTimeout(t); }, [onDone]);
-  return (
-    <div style={{ position: "fixed", bottom: 24, right: 24, background: C.accent, color: "#fff", padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 500, zIndex: 200, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", animation: "fadeIn 0.2s" }}>
-      {message}
-    </div>
-  );
-}
-
-// ─── Keyboard shortcut help modal ───────────────────────────────────
-function ShortcutHelp({ onClose }) {
-  const shortcuts = [
-    ["Ctrl + N", "New note"],
-    ["Ctrl + K", "Focus search"],
-    ["Ctrl + 1", "Go to Dashboard"],
-    ["Ctrl + 2", "Go to Notes"],
-    ["Ctrl + 3", "Go to Action Board"],
-    ["Ctrl + E", "Export data"],
-    ["Ctrl + I", "Import data"],
-    ["Escape", "Close modal / Back"],
-    ["?", "Show this help"],
-  ];
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 150 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 400, padding: 24, borderRadius: 16, background: C.card, border: `1px solid ${C.border}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700 }}>Keyboard Shortcuts</h3>
-          <Btn variant="ghost" onClick={onClose}><Icon d={I.x} size={16} /></Btn>
-        </div>
-        {shortcuts.map(([key, desc]) => (
-          <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${C.border}` }}>
-            <span style={{ fontSize: 13, color: C.textMuted }}>{desc}</span>
-            <kbd style={{ background: C.surface, padding: "2px 8px", borderRadius: 4, fontSize: 12, fontFamily: "monospace", color: C.accentLight, border: `1px solid ${C.border}` }}>{key}</kbd>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═════════════════════════════════════════════════════════════════════
-export default function SecondBrainDashboard() {
-  const [view, setView] = useState("dashboard");
-  const [notes, setNotes] = useState(SAMPLE_NOTES);
-  const [actions, setActions] = useState(SAMPLE_ACTIONS);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTags, setSelectedTags] = useState([]);
-  const [selectedNote, setSelectedNote] = useState(null);
-  const [dragItem, setDragItem] = useState(null);
-  const [showArchived, setShowArchived] = useState(false);
-  const [sortBy, setSortBy] = useState("newest"); // newest, oldest, title, source
-  const [toast, setToast] = useState(null);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  // Intake state
-  const [intakeMode, setIntakeMode] = useState("paste");
-  const [intakeTitle, setIntakeTitle] = useState("");
-  const [intakeBody, setIntakeBody] = useState("");
-  const [intakeAutoClean, setIntakeAutoClean] = useState(true);
-  const [intakeAutoExtract, setIntakeAutoExtract] = useState(true);
-
-  // Edit states
-  const [editingAction, setEditingAction] = useState(null);
-  const [editingNote, setEditingNote] = useState(null); // { id, title, body, tags }
-
-  const searchRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const importInputRef = useRef(null);
-
-  // ── Keyboard shortcuts ──
-  useEffect(() => {
-    const handler = (e) => {
-      const ctrl = e.ctrlKey || e.metaKey;
-      if (ctrl && e.key === "n") { e.preventDefault(); setView("intake"); }
-      else if (ctrl && e.key === "k") { e.preventDefault(); searchRef.current?.focus(); }
-      else if (ctrl && e.key === "1") { e.preventDefault(); setView("dashboard"); }
-      else if (ctrl && e.key === "2") { e.preventDefault(); setView("notes"); }
-      else if (ctrl && e.key === "3") { e.preventDefault(); setView("kanban"); }
-      else if (ctrl && e.key === "e") { e.preventDefault(); handleExport(); }
-      else if (ctrl && e.key === "i") { e.preventDefault(); importInputRef.current?.click(); }
-      else if (e.key === "Escape") {
-        if (editingAction) setEditingAction(null);
-        else if (editingNote) setEditingNote(null);
-        else if (showShortcuts) setShowShortcuts(false);
-        else if (view === "noteDetail") setView("notes");
-        else if (view === "intake") setView("notes");
-      }
-      else if (e.key === "?" && !ctrl && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
-        e.preventDefault(); setShowShortcuts(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [view, editingAction, editingNote, showShortcuts]);
-
-  // ── Export ──
-  const handleExport = () => {
-    const data = JSON.stringify({ notes, actions, exportedAt: now() }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `second-brain-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click(); URL.revokeObjectURL(url);
-    setToast("Data exported successfully");
-  };
-
-  // ── Import ──
-  const handleImport = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target.result);
-        if (data.notes && Array.isArray(data.notes)) {
-          setNotes(data.notes.map(n => ({ ...n, archived: n.archived ?? false })));
-        }
-        if (data.actions && Array.isArray(data.actions)) setActions(data.actions);
-        setToast(`Imported ${data.notes?.length || 0} notes and ${data.actions?.length || 0} actions`);
-      } catch { setToast("Failed to parse import file"); }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  // ── File upload for note intake ──
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setIntakeBody(ev.target.result);
-      if (!intakeTitle) setIntakeTitle(file.name.replace(/\.(txt|md|text|markdown)$/i, ""));
-      setToast(`Loaded "${file.name}"`);
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  // ── Drop handler for file upload ──
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (!file) return;
-    if (!/\.(txt|md|text|markdown)$/i.test(file.name)) { setToast("Only .txt and .md files supported"); return; }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setIntakeBody(ev.target.result);
-      if (!intakeTitle) setIntakeTitle(file.name.replace(/\.(txt|md|text|markdown)$/i, ""));
-      setToast(`Loaded "${file.name}"`);
-    };
-    reader.readAsText(file);
-  }, [intakeTitle]);
-
-  // ── All tags ──
-  const allTags = [...new Set([...notes.filter(n => !n.archived).flatMap((n) => n.tags), ...actions.flatMap((a) => a.tags)])].sort();
-
-  // ── Search + filter ──
-  const q = searchQuery.toLowerCase();
-  const filterNote = (n) => {
-    if (!showArchived && n.archived) return false;
-    if (showArchived && !n.archived) return false;
-    const matchesSearch = !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q) || n.tags.some((t) => t.includes(q));
-    const matchesTags = selectedTags.length === 0 || selectedTags.every((t) => n.tags.includes(t));
-    return matchesSearch && matchesTags;
-  };
-  const filterAction = (a) => {
-    const matchesSearch = !q || a.text.toLowerCase().includes(q) || a.tags.some((t) => t.includes(q));
-    const matchesTags = selectedTags.length === 0 || selectedTags.every((t) => a.tags.includes(t));
-    return matchesSearch && matchesTags;
-  };
-
-  // ── Sort notes ──
-  const sortNotes = (list) => {
-    const sorted = [...list];
-    if (sortBy === "newest") sorted.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    else if (sortBy === "oldest") sorted.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    else if (sortBy === "title") sorted.sort((a, b) => a.title.localeCompare(b.title));
-    else if (sortBy === "source") sorted.sort((a, b) => a.source.localeCompare(b.source));
-    return sorted;
-  };
-
-  const filteredNotes = sortNotes(notes.filter(filterNote));
-  const filteredActions = actions.filter(filterAction);
-
-  // ── Note CRUD ──
-  const handleSaveNote = () => {
-    if (!intakeBody.trim()) return;
-    const cleaned = intakeAutoClean ? cleanNote(intakeBody) : intakeBody.trim();
-    const tags = extractTags(cleaned);
-    const title = intakeTitle.trim() || cleaned.split("\n")[0].slice(0, 60) || "Untitled Note";
-    const note = { id: uid(), title, body: cleaned, source: intakeMode, tags, createdAt: now(), archived: false };
-    setNotes((prev) => [note, ...prev]);
-    if (intakeAutoExtract) {
-      const extracted = extractActions(cleaned);
-      if (extracted.length > 0) {
-        const newActions = extracted.map((t) => ({ id: uid(), text: t, status: "todo", priority: "medium", tags, noteId: note.id, createdAt: now(), dueDate: "" }));
-        setActions((prev) => [...newActions, ...prev]);
-      }
-    }
-    setIntakeTitle(""); setIntakeBody("");
-    setToast("Note saved"); setView("notes");
-  };
-
-  const handleUpdateNote = () => {
-    if (!editingNote) return;
-    const tags = extractTags(editingNote.body);
-    setNotes((prev) => prev.map((n) => n.id === editingNote.id ? { ...n, title: editingNote.title, body: editingNote.body, tags } : n));
-    if (selectedNote?.id === editingNote.id) setSelectedNote({ ...selectedNote, title: editingNote.title, body: editingNote.body, tags });
-    setEditingNote(null);
-    setToast("Note updated");
-  };
-
-  const archiveNote = (id) => {
-    setNotes((prev) => prev.map((n) => n.id === id ? { ...n, archived: true } : n));
-    if (selectedNote?.id === id) { setSelectedNote(null); setView("notes"); }
-    setToast("Note archived");
-  };
-  const restoreNote = (id) => {
-    setNotes((prev) => prev.map((n) => n.id === id ? { ...n, archived: false } : n));
-    setToast("Note restored");
-  };
-  const deleteNote = (id) => {
-    setNotes((prev) => prev.filter((n) => n.id !== id));
-    setActions((prev) => prev.filter((a) => a.noteId !== id));
-    if (selectedNote?.id === id) { setSelectedNote(null); setView("notes"); }
-    setToast("Note permanently deleted");
-  };
-
-  // ── Action CRUD ──
-  const updateAction = (id, updates) => setActions((prev) => prev.map((a) => (a.id === id ? { ...a, ...updates } : a)));
-  const deleteAction = (id) => setActions((prev) => prev.filter((a) => a.id !== id));
-  const addAction = () => {
-    const a = { id: uid(), text: "New action item", status: "todo", priority: "medium", tags: [], noteId: null, createdAt: now(), dueDate: "" };
-    setActions((prev) => [a, ...prev]);
-    setEditingAction(a);
-  };
-
-  // ── Kanban drag ──
-  const handleDragStart = (actionId) => setDragItem(actionId);
-  const handleKanbanDrop = (newStatus) => { if (dragItem) { updateAction(dragItem, { status: newStatus }); setDragItem(null); } };
-
-  // ── Stats ──
-  const activeNotes = notes.filter(n => !n.archived);
-  const stats = {
-    totalNotes: activeNotes.length,
-    totalActions: actions.filter((a) => a.status !== "done").length,
-    overdue: actions.filter((a) => a.dueDate && a.status !== "done" && new Date(a.dueDate) < new Date()).length,
-    doneThisWeek: actions.filter((a) => { if (a.status !== "done") return false; const d = new Date(a.createdAt); const week = new Date(); week.setDate(week.getDate() - 7); return d >= week; }).length,
-  };
-
-  // ── Responsive sidebar ──
-  const sideW = sidebarOpen ? 220 : 0;
-
-  // ═══════════════════════════════════════════════════════════════════
-  // VIEWS
-  // ═══════════════════════════════════════════════════════════════════
-
-  const DashboardView = () => (
-    <div>
-      <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
-        <Icon d={I.brain} size={24} color={C.accent} /> Dashboard
-      </h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 14, marginBottom: 28 }}>
-        {[
-          { label: "Notes", value: stats.totalNotes, color: C.accent, icon: I.note },
-          { label: "Open Actions", value: stats.totalActions, color: C.amber, icon: I.kanban },
-          { label: "Overdue", value: stats.overdue, color: C.red, icon: I.clock },
-          { label: "Done This Week", value: stats.doneThisWeek, color: C.green, icon: I.check },
-        ].map((s) => (
-          <div key={s.label} style={{ padding: "18px 20px", borderRadius: 12, background: C.card, border: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <Icon d={s.icon} size={16} color={s.color} />
-              <span style={{ fontSize: 12, color: C.textMuted }}>{s.label}</span>
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600 }}>Recent Notes</h3>
-            <Btn variant="ghost" onClick={() => setView("notes")} style={{ fontSize: 12 }}>View all →</Btn>
-          </div>
-          {activeNotes.slice(0, 3).map((note) => (
-            <div key={note.id} onClick={() => { setSelectedNote(note); setView("noteDetail"); }} style={{ padding: 14, borderRadius: 10, background: C.card, border: `1px solid ${C.border}`, cursor: "pointer", marginBottom: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{note.title}</div>
-              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>{note.body.replace(/[#*→★•\n]/g, " ").slice(0, 100)}…</div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {note.tags.slice(0, 3).map((t) => <Badge key={t} label={t} color={C.accentLight} bg={C.accentBg} />)}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600 }}>Urgent Actions</h3>
-            <Btn variant="ghost" onClick={() => setView("kanban")} style={{ fontSize: 12 }}>View board →</Btn>
-          </div>
-          {actions.filter((a) => a.status !== "done" && a.priority === "high").slice(0, 5).map((a) => {
-            const isOverdue = a.dueDate && new Date(a.dueDate) < new Date();
-            return (
-              <div key={a.id} style={{ padding: 12, borderRadius: 10, background: C.card, border: `1px solid ${isOverdue ? C.red + "40" : C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, flex: 1 }}>{a.text}</span>
-                <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
-                  {isOverdue && <Badge label="OVERDUE" color={C.red} bg={C.redBg} />}
-                  {a.dueDate && <span style={{ fontSize: 11, color: isOverdue ? C.red : C.textDim }}>{fmt(a.dueDate)}</span>}
-                </div>
-              </div>
-            );
-          })}
-          {actions.filter((a) => a.status !== "done" && a.priority === "high").length === 0 && (
-            <div style={{ padding: 20, textAlign: "center", color: C.textDim, fontSize: 13 }}>No urgent actions — nice work!</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  const NotesView = () => (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-          <Icon d={showArchived ? I.archive : I.note} size={24} color={C.accent} />
-          {showArchived ? "Archive" : "Notes"}
-          <span style={{ fontSize: 13, fontWeight: 400, color: C.textMuted }}>({filteredNotes.length})</span>
-        </h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <Btn variant={showArchived ? "success" : "ghost"} onClick={() => setShowArchived(!showArchived)} title="Toggle archive">
-            <Icon d={I.archive} size={14} color={showArchived ? C.green : C.textMuted} /> {showArchived ? "Active" : "Archive"}
-          </Btn>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <Icon d={I.sort} size={14} />
-            <Select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="newest">Newest</option>
-              <option value="oldest">Oldest</option>
-              <option value="title">Title A-Z</option>
-              <option value="source">Source</option>
-            </Select>
-          </div>
-          <Btn variant="primary" onClick={() => setView("intake")}>
-            <Icon d={I.plus} size={14} color="#fff" /> Add Note
-          </Btn>
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
-        {filteredNotes.map((note) => (
-          <div key={note.id} onClick={() => { setSelectedNote(note); setView("noteDetail"); }} style={{ padding: 16, borderRadius: 12, background: C.card, border: `1px solid ${note.archived ? C.textDim + "30" : C.border}`, cursor: "pointer", opacity: note.archived ? 0.7 : 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{note.title}</div>
-            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10, lineHeight: 1.5, maxHeight: 60, overflow: "hidden" }}>
-              {note.body.replace(/[#*→★•\n]/g, " ").slice(0, 150)}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
-              {note.tags.slice(0, 4).map((t) => <Badge key={t} label={t} color={C.accentLight} bg={C.accentBg} />)}
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 11, color: C.textDim }}>{fmt(note.createdAt)}</span>
-              <Badge label={note.source} color={C.textMuted} bg={C.surface} />
-            </div>
-          </div>
-        ))}
-      </div>
-      {filteredNotes.length === 0 && (
-        <div style={{ padding: 40, textAlign: "center", color: C.textDim }}>
-          {showArchived ? "No archived notes." : searchQuery || selectedTags.length ? "No notes match your search." : "No notes yet. Add your first one!"}
-        </div>
-      )}
-    </div>
-  );
-
-  const NoteDetailView = () => {
-    if (!selectedNote) return null;
-    const note = notes.find(n => n.id === selectedNote.id) || selectedNote;
-    const noteActions = actions.filter((a) => a.noteId === note.id);
-    return (
-      <div>
-        <Btn variant="ghost" onClick={() => { setView("notes"); setSelectedNote(null); }} style={{ marginBottom: 16 }}>
-          <Icon d={I.arrowLeft} size={14} /> Back to Notes
-        </Btn>
-        <div style={{ padding: 24, borderRadius: 14, background: C.card, border: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 20, fontWeight: 700, flex: 1 }}>{note.title}</h2>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn variant="ghost" onClick={() => setEditingNote({ id: note.id, title: note.title, body: note.body })} title="Edit note">
-                <Icon d={I.edit} size={14} color={C.accent} />
-              </Btn>
-              {note.archived ? (
-                <Btn variant="success" onClick={() => restoreNote(note.id)} style={{ fontSize: 12 }}>
-                  <Icon d={I.restore} size={13} color={C.green} /> Restore
-                </Btn>
-              ) : (
-                <Btn onClick={() => archiveNote(note.id)} style={{ fontSize: 12 }}>
-                  <Icon d={I.archive} size={13} /> Archive
-                </Btn>
-              )}
-              <Btn variant="danger" onClick={() => deleteNote(note.id)} style={{ fontSize: 12 }}>
-                <Icon d={I.trash} size={13} color={C.red} /> Delete
-              </Btn>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: C.textDim }}>{fmtTime(note.createdAt)}</span>
-            <Badge label={note.source} color={C.textMuted} bg={C.surface} />
-            {note.archived && <Badge label="Archived" color={C.textDim} bg={C.surface} />}
-            {note.tags.map((t) => <Badge key={t} label={t} color={C.accentLight} bg={C.accentBg} />)}
-          </div>
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
-            <RichNote text={note.body} />
-          </div>
-        </div>
-        {noteActions.length > 0 && (
-          <div style={{ marginTop: 20 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Linked Action Items ({noteActions.length})</h3>
-            {noteActions.map((a) => {
-              const pri = PRIORITY_COLORS[a.priority];
-              const col = KANBAN_COLS.find((c) => c.key === a.status);
-              return (
-                <div key={a.id} style={{ padding: 12, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 13, textDecoration: a.status === "done" ? "line-through" : "none", opacity: a.status === "done" ? 0.6 : 1 }}>{a.text}</span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <Badge label={col?.label} color={col?.color} bg={col?.bg} />
-                    <Badge label={pri.label} color={pri.color} bg={pri.bg} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const KanbanView = () => (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-          <Icon d={I.kanban} size={24} color={C.accent} /> Action Board
-        </h2>
-        <Btn variant="primary" onClick={addAction}>
-          <Icon d={I.plus} size={14} color="#fff" /> Add Action
-        </Btn>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
-        {KANBAN_COLS.map((col) => {
-          const colActions = filteredActions.filter((a) => a.status === col.key);
-          return (
-            <div key={col.key} onDragOver={(e) => e.preventDefault()} onDrop={() => handleKanbanDrop(col.key)} style={{ background: C.surface, borderRadius: 14, padding: 14, border: `1px solid ${C.border}`, minHeight: 300 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, paddingBottom: 10, borderBottom: `2px solid ${col.color}` }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: col.color }}>{col.label}</span>
-                <span style={{ fontSize: 12, color: C.textDim, background: C.bg, padding: "2px 8px", borderRadius: 99 }}>{colActions.length}</span>
-              </div>
-              {colActions.map((action) => {
-                const pri = PRIORITY_COLORS[action.priority];
-                const isOverdue = action.dueDate && action.status !== "done" && new Date(action.dueDate) < new Date();
-                return (
-                  <div key={action.id} draggable onDragStart={() => handleDragStart(action.id)} style={{ padding: 12, borderRadius: 10, background: C.card, border: `1px solid ${isOverdue ? C.red + "40" : C.border}`, cursor: "grab", marginBottom: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                      <span style={{ fontSize: 13, lineHeight: 1.4, flex: 1, marginRight: 8 }}>{action.text}</span>
-                      <span onClick={(e) => { e.stopPropagation(); setEditingAction(action); }} style={{ cursor: "pointer", opacity: 0.5, flexShrink: 0 }}>
-                        <Icon d={I.edit} size={14} />
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                      <Badge label={pri.label} color={pri.color} bg={pri.bg} />
-                      {isOverdue && <Badge label="OVERDUE" color={C.red} bg={C.redBg} />}
-                      {action.tags.slice(0, 2).map((t) => <Badge key={t} label={t} color={C.accentLight} bg={C.accentBg} />)}
-                      {action.dueDate && <span style={{ fontSize: 11, color: isOverdue ? C.red : C.textDim, display: "flex", alignItems: "center", gap: 3 }}><Icon d={I.clock} size={11} color={isOverdue ? C.red : C.textDim} /> {fmt(action.dueDate)}</span>}
-                    </div>
-                  </div>
-                );
-              })}
-              {colActions.length === 0 && <div style={{ padding: 20, textAlign: "center", color: C.textDim, fontSize: 12 }}>Drop items here</div>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  const IntakeView = () => (
-    <div>
-      <Btn variant="ghost" onClick={() => setView("notes")} style={{ marginBottom: 16 }}>
-        <Icon d={I.arrowLeft} size={14} /> Back
-      </Btn>
-      <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
-        <Icon d={I.upload} size={24} color={C.accent} /> Add Note
-      </h2>
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {[
-          { key: "paste", icon: I.paste, label: "Paste / Type" },
-          { key: "slack", icon: I.slack, label: "From Slack" },
-          { key: "upload", icon: I.upload, label: "Upload File" },
-        ].map((tab) => (
-          <Btn key={tab.key} variant={intakeMode === tab.key ? "primary" : "default"} onClick={() => setIntakeMode(tab.key)} style={{ fontSize: 12 }}>
-            <Icon d={tab.icon} size={14} color={intakeMode === tab.key ? "#fff" : C.textMuted} /> {tab.label}
-          </Btn>
-        ))}
-      </div>
-      <div style={{ padding: 24, borderRadius: 14, background: C.card, border: `1px solid ${C.border}` }}>
-        <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Title (optional)</label>
-          <Input value={intakeTitle} onChange={(e) => setIntakeTitle(e.target.value)} placeholder="e.g. Sprint Planning — March 5" />
-        </div>
-
-        {intakeMode === "paste" && (
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Paste or type your notes</label>
-            <Textarea value={intakeBody} onChange={(e) => setIntakeBody(e.target.value)} placeholder={"Paste meeting notes, Slack messages, or any text here...\n\nTip: Use #tags to categorise, and lines starting with\n'Action item:', 'TODO:', or '[ ]' will be auto-extracted."} style={{ minHeight: 200 }} />
-          </div>
-        )}
-
-        {intakeMode === "slack" && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ padding: 16, borderRadius: 10, background: C.accentBg, border: `1px solid ${C.accent}30`, marginBottom: 14 }}>
-              <div style={{ fontSize: 13, color: C.accentLight, fontWeight: 600, marginBottom: 4 }}>Slack Import</div>
-              <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
-                Copy messages from Slack and paste below. The cleaner will format speaker names, strip emoji codes, and extract action items.
-              </div>
-            </div>
-            <Textarea value={intakeBody} onChange={(e) => setIntakeBody(e.target.value)} placeholder={"Paste Slack messages here...\n\ne.g.\njohn  10:30 AM\nHey team, update from client call:\n- They want MVP by end of March\n- TODO: Send revised timeline"} style={{ minHeight: 200 }} />
-          </div>
-        )}
-
-        {intakeMode === "upload" && (
-          <div style={{ marginBottom: 14 }}>
-            <div onDragOver={(e) => e.preventDefault()} onDrop={handleDrop} onClick={() => fileInputRef.current?.click()} style={{ padding: 30, borderRadius: 10, border: `2px dashed ${C.border}`, textAlign: "center", marginBottom: 14, cursor: "pointer", transition: "border-color 0.15s" }} onDragEnter={(e) => { e.currentTarget.style.borderColor = C.accent; }} onDragLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}>
-              <Icon d={I.upload} size={32} color={C.textDim} style={{ margin: "0 auto 12px", display: "block" }} />
-              <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 4 }}>Click or drop a .txt / .md file here</div>
-              <div style={{ fontSize: 11, color: C.textDim }}>File contents will appear below for review</div>
-            </div>
-            <input ref={fileInputRef} type="file" accept=".txt,.md,.text,.markdown" onChange={handleFileUpload} style={{ display: "none" }} />
-            <Textarea value={intakeBody} onChange={(e) => setIntakeBody(e.target.value)} placeholder="Or paste file contents here..." style={{ minHeight: 160 }} />
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 20, marginBottom: 20 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textMuted, cursor: "pointer" }}>
-            <input type="checkbox" checked={intakeAutoClean} onChange={() => setIntakeAutoClean(!intakeAutoClean)} style={{ accentColor: C.accent }} /> Auto-clean & format
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textMuted, cursor: "pointer" }}>
-            <input type="checkbox" checked={intakeAutoExtract} onChange={() => setIntakeAutoExtract(!intakeAutoExtract)} style={{ accentColor: C.accent }} /> Extract action items
-          </label>
-        </div>
-
-        {intakeBody.trim() && intakeAutoClean && (() => {
-          const cleanedText = cleanNote(intakeBody);
-          const rawLines = intakeBody.trim().split("\n").length;
-          const cleanLines = cleanedText.split("\n").filter(l => l.trim()).length;
-          const removed = rawLines - cleanLines;
-          const rawWords = intakeBody.trim().split(/\s+/).length;
-          const cleanWords = cleanedText.split(/\s+/).length;
-          const pctReduction = rawWords > 0 ? Math.round(((rawWords - cleanWords) / rawWords) * 100) : 0;
-          return (
-            <div style={{ marginBottom: 20 }}>
-              {/* Cleaning stats bar */}
-              <div style={{ display: "flex", gap: 16, marginBottom: 10, padding: "8px 12px", borderRadius: 8, background: C.accentBg, fontSize: 11, color: C.accentLight, alignItems: "center" }}>
-                <span style={{ fontWeight: 600 }}>Cleaning results:</span>
-                <span>{rawWords} → {cleanWords} words ({pctReduction}% tighter)</span>
-                {removed > 0 && <span>{removed} noise lines removed</span>}
-              </div>
-              {/* Side by side */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: C.textDim, marginBottom: 6, fontWeight: 600 }}>RAW INPUT</div>
-                  <div style={{ padding: 12, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}`, maxHeight: 220, overflow: "auto", fontSize: 12, whiteSpace: "pre-wrap", color: C.textDim, lineHeight: 1.5 }}>
-                    {intakeBody.trim()}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: C.green, marginBottom: 6, fontWeight: 600 }}>CLEANED OUTPUT</div>
-                  <div style={{ padding: 12, borderRadius: 10, background: C.surface, border: `1px solid ${C.green}30`, maxHeight: 220, overflow: "auto" }}>
-                    <RichNote text={cleanedText} />
-                  </div>
-                </div>
-              </div>
-              {intakeAutoExtract && extractActions(cleanedText).length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, color: C.amber, marginBottom: 6 }}>Detected action items:</div>
-                  {extractActions(cleanedText).map((item, i) => (
-                    <div key={i} style={{ fontSize: 12, color: C.text, padding: "4px 0", paddingLeft: 12, borderLeft: `2px solid ${C.amber}` }}>{item}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        {intakeBody.trim() && !intakeAutoClean && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Preview (raw, no cleaning)</div>
-            <div style={{ padding: 14, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}>
-              {intakeBody.trim()}
-            </div>
-          </div>
-        )}
-        <Btn variant="primary" onClick={handleSaveNote} disabled={!intakeBody.trim()} style={{ width: "100%", justifyContent: "center", padding: "10px 20px" }}>
-          <Icon d={I.check} size={14} color="#fff" /> Save Note
-        </Btn>
-      </div>
-    </div>
-  );
-
-  // ── Modals ──
-  const EditActionModal = () => {
-    if (!editingAction) return null;
-    const a = editingAction;
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditingAction(null)}>
-        <div onClick={(e) => e.stopPropagation()} style={{ width: 420, maxWidth: "90vw", padding: 24, borderRadius: 16, background: C.card, border: `1px solid ${C.border}` }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Edit Action</h3>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Description</label>
-            <Textarea value={a.text} onChange={(e) => setEditingAction({ ...a, text: e.target.value })} style={{ minHeight: 80 }} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <div>
-              <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Priority</label>
-              <Select value={a.priority} onChange={(e) => setEditingAction({ ...a, priority: e.target.value })}>
-                <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
-              </Select>
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Due Date</label>
-              <Input type="date" value={a.dueDate} onChange={(e) => setEditingAction({ ...a, dueDate: e.target.value })} />
-            </div>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Tags (comma-separated)</label>
-            <Input value={a.tags.join(", ")} onChange={(e) => setEditingAction({ ...a, tags: e.target.value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean) })} placeholder="#project, #urgent" />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <Btn variant="danger" onClick={() => { deleteAction(a.id); setEditingAction(null); }}>
-              <Icon d={I.trash} size={13} color={C.red} /> Delete
-            </Btn>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Btn onClick={() => setEditingAction(null)}>Cancel</Btn>
-              <Btn variant="primary" onClick={() => { updateAction(a.id, { text: a.text, priority: a.priority, dueDate: a.dueDate, tags: a.tags }); setEditingAction(null); }}>Save</Btn>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const EditNoteModal = () => {
-    if (!editingNote) return null;
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditingNote(null)}>
-        <div onClick={(e) => e.stopPropagation()} style={{ width: 600, maxWidth: "90vw", maxHeight: "80vh", padding: 24, borderRadius: 16, background: C.card, border: `1px solid ${C.border}`, display: "flex", flexDirection: "column" }}>
-          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Edit Note</h3>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Title</label>
-            <Input value={editingNote.title} onChange={(e) => setEditingNote({ ...editingNote, title: e.target.value })} />
-          </div>
-          <div style={{ marginBottom: 16, flex: 1 }}>
-            <label style={{ fontSize: 12, color: C.textMuted, display: "block", marginBottom: 6 }}>Body</label>
-            <Textarea value={editingNote.body} onChange={(e) => setEditingNote({ ...editingNote, body: e.target.value })} style={{ minHeight: 300 }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <Btn onClick={() => setEditingNote(null)}>Cancel</Btn>
-            <Btn variant="primary" onClick={handleUpdateNote}>Save Changes</Btn>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // LAYOUT
-  // ═══════════════════════════════════════════════════════════════════
-  return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-
-      {/* Hidden import input */}
-      <input ref={importInputRef} type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
-
-      {/* Mobile hamburger */}
-      <div onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", top: 12, left: 12, zIndex: 20, cursor: "pointer", padding: 6, borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, display: sidebarOpen ? "none" : "block" }}>
-        <Icon d={I.kanban} size={20} color={C.accent} />
-      </div>
-
-      {/* Sidebar */}
-      {sidebarOpen && (
-        <div style={{ width: 220, background: C.surface, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", padding: "16px 0", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 10 }}>
-          <div style={{ padding: "4px 20px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Icon d={I.brain} size={22} color={C.accent} />
-              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Second Brain</span>
-            </div>
-            <span onClick={() => setSidebarOpen(false)} style={{ cursor: "pointer", opacity: 0.5 }}>
-              <Icon d={I.x} size={14} />
-            </span>
-          </div>
-
-          {[
-            { key: "dashboard", icon: I.brain, label: "Dashboard", match: (v) => v === "dashboard" },
-            { key: "notes", icon: I.note, label: "Notes", match: (v) => v === "notes" || v === "noteDetail" },
-            { key: "kanban", icon: I.kanban, label: "Action Board", match: (v) => v === "kanban" },
-            { key: "intake", icon: I.upload, label: "Add Note", match: (v) => v === "intake" },
-          ].map((nav) => {
-            const active = nav.match(view);
-            return (
-              <div key={nav.key} onClick={() => setView(nav.key)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13, fontWeight: active ? 600 : 400, color: active ? C.accent : C.textMuted, background: active ? C.accentBg : "transparent", borderLeft: active ? `3px solid ${C.accent}` : "3px solid transparent" }}>
-                <Icon d={nav.icon} size={16} color={active ? C.accent : C.textMuted} /> {nav.label}
-              </div>
-            );
-          })}
-
-          {/* Data controls */}
-          <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.border}`, marginTop: 12 }}>
-            <div style={{ fontSize: 11, color: C.textDim, marginBottom: 8 }}>DATA</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <Btn variant="ghost" onClick={handleExport} style={{ fontSize: 11 }} title="Ctrl+E">
-                <Icon d={I.download} size={12} /> Export
-              </Btn>
-              <Btn variant="ghost" onClick={() => importInputRef.current?.click()} style={{ fontSize: 11 }} title="Ctrl+I">
-                <Icon d={I.upload} size={12} /> Import
-              </Btn>
-              <Btn variant="ghost" onClick={() => setShowShortcuts(true)} style={{ fontSize: 11 }} title="Press ?">
-                <Icon d={I.keyboard} size={12} /> Keys
-              </Btn>
-            </div>
-          </div>
-
-          {/* Tag filter */}
-          <div style={{ marginTop: "auto", padding: "12px 16px", borderTop: `1px solid ${C.border}`, maxHeight: 200, overflow: "auto" }}>
-            <div style={{ fontSize: 11, color: C.textDim, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon d={I.tag} size={12} /> TAGS
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {allTags.map((t) => (
-                <span key={t} onClick={() => setSelectedTags((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t])} style={{ padding: "3px 8px", borderRadius: 99, fontSize: 11, cursor: "pointer", background: selectedTags.includes(t) ? C.accentBg : C.bg, color: selectedTags.includes(t) ? C.accentLight : C.textDim, border: `1px solid ${selectedTags.includes(t) ? C.accent + "40" : C.border}` }}>
-                  {t}
-                </span>
-              ))}
-              {selectedTags.length > 0 && (
-                <span onClick={() => setSelectedTags([])} style={{ padding: "3px 8px", borderRadius: 99, fontSize: 11, cursor: "pointer", color: C.red, background: C.redBg }}>clear</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main content */}
-      <div style={{ marginLeft: sideW, padding: "24px 32px", maxWidth: 1100, transition: "margin-left 0.2s" }}>
-        {/* Search bar */}
-        <div style={{ marginBottom: 24, position: "relative" }}>
-          <Icon d={I.search} size={16} color={C.textDim} style={{ position: "absolute", left: 12, top: 10 }} />
-          <Input ref={searchRef} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search notes and actions… (Ctrl+K)" style={{ paddingLeft: 36, background: C.card }} />
-          {searchQuery && <span onClick={() => setSearchQuery("")} style={{ position: "absolute", right: 12, top: 10, cursor: "pointer" }}><Icon d={I.x} size={14} /></span>}
-        </div>
-
-        {(searchQuery || selectedTags.length > 0) && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: C.textDim }}>Filters:</span>
-            {searchQuery && <Badge label={`"${searchQuery}"`} color={C.text} bg={C.surface} onRemove={() => setSearchQuery("")} />}
-            {selectedTags.map((t) => <Badge key={t} label={t} color={C.accentLight} bg={C.accentBg} onRemove={() => setSelectedTags((p) => p.filter((x) => x !== t))} />)}
-          </div>
-        )}
-
-        {view === "dashboard" && <DashboardView />}
-        {view === "notes" && <NotesView />}
-        {view === "noteDetail" && <NoteDetailView />}
-        {view === "kanban" && <KanbanView />}
-        {view === "intake" && <IntakeView />}
-      </div>
-
-      <EditActionModal />
-      <EditNoteModal />
-      {showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
-      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
-    </div>
-  );
-}
+  text = text.repla�J׸�(��ʊΕ�H
+ΙX�YYYܙYY
+JΈ�O�
+Α��[���[�
+H�]�[�[�[�W����K��[K��!HP�T�Sӎ�	H�N��[��\�����]\����H��[YH�[���[YHȋ��Z][��ۈ��^H^��\X�J׸�(��ʊΐ����Ν�[���[�YY���W��J��K��[K��������UT�		��N^H^��\X�J׸�(��ʊΕ�Z][��۟����Y�_[�[���YY
+Μ�O�
+Κ[�]�\�ۜ�_\�ݘ[
+H���JW����K��[K��������UT�		��N���8�d8�d8�dT�H��\��X�\�H8�%�]\�X�[ۜ�	�X�\�[ۜ�����H8�d8�d8�d��ۜ��[�[[�\�H^��]
+���N�ۜ���S[�\�H�N�ۜ�X�[ۓ[�\�H�N�ۜ�X�\�[ۓ[�\�H�N�ۜ�ۙS[�\�H�N��܈
+�ۜ�[�Hو�[�[[�\�HY�
+[�K��\���]
+�����JHX�[ۓ[�\˜\�
+[�JN[�HY�
+[�K��\���]
+��!H�JHX�\�[ۓ[�\˜\�
+[�JN[�HY�
+[�K��\���]
+��$��JHۙS[�\˜\�
+[�JN[�H��S[�\˜\�
+[�JNB�����[[ݙH�Z[[���[��[�\����H��B��[H
+��S[�\˛[���	����S[�\�؛�S[�\˛[��HWK��[J
+HOOH��H��S[�\˜�
+
+N����X�Z[�]�X�[ۜ]�\�[H��S[�\˚��[����NY�
+X�\�[ۓ[�\˛[���
+H�\�[
+�H�����X�\�[ۜ����
+�X�\�[ۓ[�\˚��[����NB�Y�
+X�[ۓ[�\˛[���
+H�\�[
+�H�����X�[ۈ][\����
+�X�[ۓ[�\˚��[����NB�Y�
+ۙS[�\˛[���
+H�\�[
+�H����
+�ۙS[�\˚��[����NB����8�d8�d8�dT�HN��[�[�]\�X�H�X[�\8�d8�d8�d��\�[H�\�[��\X�J��J���K��N�\�[H�\�[��\X�J����K������N�\�[H�\�[��\X�Jח�����N��[��\�H�X�[���Y�ܙHXY\��\�[H�\�[��\X�J�ח�JW���
+K���W����N���\][\�H�\��]\�و�[]�۝[���\�[H�\�[��\X�J׊8�(�
+J�K^�JK��K
+��HO�
+�˝�\\��\�J
+JN���[[ݙHܜ[��[]�
+�[]�]ۛHKL��\��B��\�[H�\�[��\X�J׸�(���K�Wʉ��K��N��]\���\�[��[J
+NB����8� 8� 8� �X�^�[�\�\�8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��[��[ۈ�[�\�[�[�J^
+HY�
+]^
+H�]\���[�ۜ�\��H�N�ۜ��Y�^H�
+�
+����W
+�
+�
+����W
+�
+���X
+��K^�KV�NW�WJ�JK��]\�[�^HX]��^HH�[H
+
+X]�H�Y�^�^X�^
+JHOOH�[
+HY�
+X]��[�^�\�[�^
+H\�˜\�
+�[��^O^��^J��O��^��X�J\�[�^X]��[�^
+_O��[��NY�
+X]�̗JH\�˜\�
+��ۙ��^O^��^J��H�[O^���۝�ZY��
+�_O��X]�̗_O���ۙϊN[�HY�
+X]���JH\�˜\�
+[H�^O^��^J��H�[O^���۝�[N��][Xȋ��܎�˝^]]Y_O��X]���_O�[O�N[�HY�
+X]��JH\�˜\�
+��H�^O^��^J��H�[O^���X��ܛ�[��˜�\��X�KY[�Έ�\
+\��ܙ\��Y]\Έ
+�۝�^�N�L��۝�[Z[N��[ۛ��X�H�_O��X]��_O���O�N[�HY�
+X]��WJH\�˜\�
+�[��^O^��^J��H�[O^����܎�˘X��[�Y��۝�ZY��
+L�۝�^�N�L�_O��X]��W_O��[��N\�[�^HX]��[�^
+�X]��K�[��B�Y�
+\�[�^^�[��
+H\�˜\�
+�[��^O^��^J��O��^��X�J\�[�^
+_O��[��N�]\��\�˛[����\���^B���[��[ۈ�X���J�^�[HH�HJHY�
+]^
+H�]\���[�ۜ�[�\�H^��]
+���N�ۜ�[[Y[��H�N�܈
+]HH�H[�\˛[���J��H�ۜ�[�HH[�\��WNY�
+[�K��[J
+HOOH��H�[[Y[�˜\�
+]��^O^�_H�[O^��ZY��L_HϊN��۝[�YN�B�Y�
+[�K��\���]
+����JH[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�M�۝�ZY��
+���܎�˘X��[�Y�X\��[���MX\��[����N�
+�Y[�Л��N�
+�ܙ\����N�\��Y	�˘�ܙ\�X_O��[�K��X�J�_O�]��N�۝[�YNB�Y�
+[�K��\���]
+�����JH�ۜ�HH[�K�X]�
+׸���
+�KV�WJ�N�ʊ��K�NY�
+JH�ۜ��HV�WHOOH��Ȉ�˘[X�\��V�WHOOH�P�Sӈ��˜�Y�V�WK�[��Y\�����ȊH�˘�YH�˘X��[�[[Y[�˜\�
+�]��^O^�_H�[O^��\�^N���^��\�[Yے][\Έ��^\�\��Y[�Έ��L�X\��[����N�
+�ܙ\��Y]\Έ�X��ܛ�[��	��LL�ܙ\�Y�����Y	��X_O���[��[O^���۝�^�N�L�۝�ZY��
+���܎���X��ܛ�[��	��L�Y[�Έ�\
+���ܙ\��Y]\Έ
+�^��[�ΈX\��[����_O��V�W_O��[����[��[O^���۝�^�N�L�[�RZY��K�H_O�ܙ[�\�[�[�JV̗J_O��[����]���
+NH[�H[[Y[�˜\�
+]��^O^�_H�[O^��Y[�Έ�L�X\��[����N���ܙ\�Y�����Y	�˘[X�\�X�۝�^�N�L�[�RZY��K�H_O�ܙ[�\�[�[�J[�K��X�J�J_O�]��NB��۝[�YNB�Y�
+[�K��\���]
+��!H�JH�ۜ��۝[�H[�K��\X�J׸�!WʑP�T�Sӎ�ʋ���N[[Y[�˜\�
+�]��^O^�_H�[O^��\�^N���^��\�[Yے][\Έ��^\�\��Y[�Έ�L��X\��[����N�
+�ܙ\��Y]\Έ�X��ܛ�[��˙ܙY[����ܙ\�Y�����Y	�˙ܙY[�X_O���[��[O^���۝�^�N�L�۝�ZY��
+���܎�˙ܙY[��X��ܛ�[��	�˙ܙY[�L�Y[�Έ�\
+���ܙ\��Y]\Έ
+�^��[�ΈX\��[����_O�P�T�Sӏ��[����[��[O^���۝�^�N�L�[�RZY��K�K�۝�ZY��
+L_O�ܙ[�\�[�[�J�۝[�
+_O��[����]���
+N�۝[�YNB�Y�
+[�K��\���]
+��$��JH[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�L�[�RZY��K�KY[�Έ��L���܎�˝^[K^X�ܘ][ێ��[�K]��Y��\�^N���^��\�
+�[Yے][\Έ��[�\��_O��[��[O^����܎�˙ܙY[�_O��$���[���[�K��X�J�_O�]��N�۝[�YNB�Y�
+[�K��\���]
+��(��JH[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�L�[�RZY��K��Y[��Y��M���][ێ���[]]�H�X\��[����N��_O��[��[O^����][ێ��X���]H�Y����܎�˘X��[�_O��(���[��ܙ[�\�[�[�J[�K��X�J�J_O�]��N�۝[�YNB��ۜ��[SX]�H[�K�X]�
+׊
+�W�����K�NY�
+�[SX]�
+H[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�L�[�RZY��K��Y[��Y������][ێ���[]]�H�X\��[����N��_O��[��[O^����][ێ��X���]H�Y����܎�˘X��[��۝�ZY��
+��۝�^�N�L�_O�۝[SX]��W_K���[��ܙ[�\�[�[�J�[SX]�̗J_O�]��N�۝[�YNB�Y�
+[�K��\���]
+����H	��[�K�[��Y\�����JH�ۜ��HH[�K�X]�
+ח
+�
+����W
+�
+�ʊ��K�NY�
+�JH�[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�L��۝�ZY��
+���܎�˘X��[�Y�X\��[���LX\��[����N��_O���V�W_H�[��[O^���۝�ZY��
+��܎�˝^[K�۝�^�N�LH_O���V̗_O��[���]��N��۝[�YN�B�B�[[Y[�˜\�
+]��^O^�_H�[O^���۝�^�N�L�[�RZY��K��X\��[����N�
+_O�ܙ[�\�[�[�J[�J_O�]��NB��]\��]��[O^��[_O��[[Y[��O�]��B����8� 8� 8� X�[ۈ^�X�[ۈ8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��[��[ۈ^�X�X�[ۜ�^
+H�ۜ�]\���H��ΘX�[ۈ][_���Y�\�������HO�\�^�\
+V��O�Ηx�$�Wʊ��K��K��ʗWʊ��K��׸�(�ʊΕ��P�Sӟ�����HO�T
+VΗ�J���K��[WN�ۜ�][\�H�N�܈
+�ۜ�و]\���H�]N��[H
+
+HH�^X�^
+JHOOH�[
+H��ۜ�HV�WK��[J
+N�Y�
+�[����	��Z][\˚[��Y\�
+JH][\˜\�
+
+N�HB��]\��][\�B��[��[ۈ^�X�Y��^
+H�ۜ�X]�\�H^�X]�
+���K^�KV�NW�WJ���H�N�]\��ˋ���]��]
+X]�\˛X\
+
+
+HO�����\��\�J
+JJWNB����8� 8� 8� ���\�[]H8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��ۜ��H�Έ��L�L��\��X�N���L�MLXȋ�\��X�Rݙ\����XLYL���\����MLNL����\�ݙ\����X̌L����ܙ\����YL���ȋ�ܙ\����\Έ���
+�ȋ^���NXY��^]]Y�����N�^[N���MM
+���X��[����M���H�X��[�Y������Y��X��[��Έ��ؘJM��L�K�L�L
+H��X��[�ܘY��[�X\�YܘYY[�
+L�YY��M���H	K�Nَ
+L	K͍͌��HL	JH��ܙY[������NH�ܙY[��Έ��ؘJ
+L��LKML��L
+H�[X�\���٘�����[X�\��Έ��ؘJ�LKNLK͋�L
+H���Y��َ
+�M�H��Y�Έ��ؘJ�LL�LL��L
+H��YN��͌MY�H��YP�Έ��ؘJM�M�K�L�L
+H����Έ���ؘJM��L�K�L�MJH��N��ۜ��S��S�����H��^N���ȋX�[���ȋ��܎�˘[X�\��Έ˘[X�\���K���^N��[����ܙ\�ȋX�[��[���ܙ\�ȋ��܎�˘�YK�Έ˘�YP��K���^N��ۙH�X�[��ۙH���܎�˙ܙY[��Έ˙ܙY[���K�N�ۜ��SԒUW���Ԕ�HY�����܎�˜�Y�Έ˜�Y��X�[��Y��K�YY][N����܎�˘[X�\��Έ˘[X�\���X�[��YY�K��Έ���܎�˙ܙY[��Έ˙ܙY[���X�[���ȈK�N���8� 8� 8� �[\H]H8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��ۜ��STWӓ�T�H�Y�ZY
+
+K]N����X��[��8�%X\��ȋ��N������X��[����\��\��YL���YX\�[ܚ]Y\��]H�[��X�X[K������^H\]\����(�[ؚ[H\�Y\�Yۈ�X���ٙ�X\��MW��(�TH��ZYܘ][ۈ8�%�YY[Y[[�H���H�X��[�X[W��(��\��Y\��YY�X��\���\�U�YH[�و[۝��(�\�Yۈ�\�[H��[��\�H���]�H[��Y�XW����X�\�[ۜ����!HP�T�Sӎ���[���]�XX��]]�H�܈H[ؚ[H�]ܚ]Hݙ\��]\���!HP�T�Sӎ�TH���[�HH��XZ�[���[��H8�%LY^H\�X�][ۈ�[��������P�Sӎ���Y[H\�Yۈ�]�Y]��]�\�Z�H��Y^W��������UT��]THZYܘ][ۈ\�[X]H���H]��������Έ�Y�L��Ԝ�[��\�H�]XY\��\�����V��\�H\]Y[Y[[�H�]�Z�Z�\���HS�������X��L�\[��[��ܛ�YX\���\��N��X[�X[�Y�ΈȈ���X����L�\[��[�ȋ�ܛ�YX\�KܙX]Y]�����L�L�L�����\��]�Y��[�HK��Y�ZY
+
+K]N��N�H�]X[�Y�\�8�%�X�����N�����\�Y\�ܛ���X��Z[���[�YX��]ܛ��\�X\�[�\��Z[���ڙX�˗���(�Z�HXYۈH[�[]X��[�Yܘ][ۈ�ڙX���(��\�[�][ۈ��[��ܚ���]�Z[X�H[�\�[��(�\��ܛX[��H�]�Y]��X�H�\��X\�������X�[ۈ][\�������Έܚ]H�[�\�]�Y]��Y��HX\��N��������UT��Y�\�\��܈�\�[�][ۈ�ܚ��������Έ�]\�YZ�HN�H�]H[�[]X��X[HXY���[یH��\�Y\��ܛ�����\��N��X[�X[�Y�ΈȈ�[یH����\�Y\����ܛ���KܙX]Y]�����L�L�M����\��]�Y��[�HK��Y�ZY
+
+K]N���X���[�\8�%X\��
+���N�����\�Z�[���
+N�MHSJN���(��[�\�YHۘ��\�[�����[���\���(��\�[��\�\�\�[���ܚ\��^W�����Έ�\�H[���\�[��\�Yۋ\�]�Y]���H��ۗ����ZZ�H����
+N���SJN���(�TH�]H[Z]\�\�\�YY��Y�[����(���[�H�Y�[�H]]��[��Y��\�8�%[��\�Y�][������P�Sӎ��^��[��Y��\��Y��Y�ܙH�[X\�W�����ۊ��
+N��SJN���(��]�Y]�YL��Y�]�]�[�[��W��!HP�T�Sӎ�\�ݙYXY��[��܈�[ܙH[��[�Y\�������V����؈\�ܚ\[ۜ��H��Y^W����[�\�Z[H�[��[�Y\�[�ȋ��\��N���X�ȋY�ΈȈ��[�\���Z[H���[��[�Y\�[�ȗKܙX]Y]�����L�L
+N�����\��]�Y��[�HK�N�ۜ��STW�P�SӔ�H�Y�ZY
+
+K^����Y[H\�Yۈ�]�Y]��]�\�Z�H��Y^H��]\Έ��ȋ�[ܚ]N��Y��Y�ΈȈ���X��K��RY��STWӓ�T��K�YܙX]Y]�����L�L�L�����YQ]N�����L�L
+ȈK��Y�ZY
+
+K^���]THZYܘ][ۈ\�[X]H���H]��ȋ�]\Έ��ȋ�[ܚ]N��YY][H�Y�ΈȈ���X��K��RY��STWӓ�T��K�YܙX]Y]�����L�L�L�����YQ]N���K��Y�ZY
+
+K^���Y�L��Ԝ�[��\�H�]XY\��\��]\Έ�[����ܙ\�ȋ�[ܚ]N��Y��Y�ΈȈ���X����L�\[��[�ȗK��RY��STWӓ�T��K�YܙX]Y]�����L�L�L�����YQ]N�����L�LM�K��Y�ZY
+
+K^���\�H\]Y[Y[[�H�]�Z�Z�\���HS�ȋ�]\Έ��ȋ�[ܚ]N��YY][H�Y�ΈȈ���X��K��RY��STWӓ�T��K�YܙX]Y]�����L�L�L�����YQ]N�����L�L
+ȈK��Y�ZY
+
+K^��ܚ]H�[�\�]�Y]��Y��HX\��N��]\Έ��ȋ�[ܚ]N��Y��Y�ΈȈ��\�Y\��K��RY��STWӓ�T��WK�YܙX]Y]�����L�L�M����YQ]N�����L�LN�K��Y�ZY
+
+K^���Y�\�\��܈�\�[�][ۈ�ܚ�����]\Έ�ۙH��[ܚ]N���ȋY�ΈȈ�ܛ���K��RY��STWӓ�T��WK�YܙX]Y]�����L�L�M����YQ]N���K��Y�ZY
+
+K^���\�H[���\�[��\�Yۋ\�]�Y]���H��ۈ��]\Έ�[����ܙ\�ȋ�[ܚ]N��YY][H�Y�ΈȈ��[�\���[��[�Y\�[�ȗK��RY��STWӓ�T�̗K�YܙX]Y]�����L�L
+N�����YQ]N�����L�L
+�K��Y�ZY
+
+K^���^��[��Y��\��Y��Y�ܙH�[X\�H��]\Έ��ȋ�[ܚ]N��Y��Y�ΈȈ�[��[�Y\�[�ȗK��RY��STWӓ�T�̗K�YܙX]Y]�����L�L
+N�����YQ]N���K��Y�ZY
+
+K^�����؈\�ܚ\[ۜ��H��Y^H��]\Έ��ȋ�[ܚ]N��YY][H�Y�ΈȈ�[��[�Y\�[�ȗK��RY��STWӓ�T�̗K�YܙX]Y]�����L�L
+N�����YQ]N�����L�L
+ȈK�N���8� 8� 8� X�ۜ�8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��ۜ�X�ۈH
+��^�HHN��܈H˝^]]Y�[HH�HJHO�
+�ݙ��Y^��^�_HZY�^��^�_H�Y]Л�H�����[H��ۙH�����O^���ܟH����U�Y^̟H����S[�X�\H���[������S[�Z��[�H���[���[O^��[_O�]^�HϏ�ݙς�N�ۜ�HH�X\����L�H�[M��KM��SLLHNXNLLM�M����\Έ�LL�
+]�MMHL�M����N��LM�
+�L��L���M�L����L�L���L���LM���
+����[��[���L��
+��NޓNH�
+��L�^�LMH�
+��M����YΈ�L��NHLˍ[MˌM�
+ˌM�L��KL����L���L�NH�NXL��L����M�
+��H��\�Y��L�HM]�L��KL��
+XL��KL�L��MLM�MKMKMH
+SLL�݌L����X�Έ�L�
+�HM�MKMH����LN
+�
+�NM�
+�L�L����\���L�
+�NLNH
+��ML��KL��
+�L��KL�L���L��L��L�L�
+L��L������Y]��LLH
+
+L��L���ML����ML���L��M�LN�H��XL��L�H��L�HL��L�M[MHKMK�KNK�^������Έ�LL��LLLL�LLL��LL�
+���
+�����Z[���LL��M�
+�M�
+�����LK�NH
+�
+�L�
+K���M�L��KL��ML��KL�L��L����͋�NHLˍ
+�
+HLK��
+HXM�
+�M�MޓNH��
+����[\���L����K�
+��N[
+��N�M��ވ��ܚ\��NH
+Z�SNHL��SNHNZ�SLMH
+Z�SLMHL��SLMHNZ�H���X�Έ�LM�HL�K��LK�KK���LK�KLK�]�MX�K�ˍ��LK�HK�KLK�\�K�K���K�HK�]�X���K���K�KLK�HK�^�L�LLK�X�K��LK�KK���LK�KLK�\ˍ��LK�HK�KLK�R�ˎ�K�K���K�HK�Ť��L�L���\�N��LM�
+�L��L���ML��KL��
+�L��KL�L���L��L�L��NH�
+�LHHLH]�XLHHKLHRXLHHKLKLU��LHHLKL^���^YN��LHL��NLKNLHLHMLLHLLKNLLKN�LL�XL��L
+���M����\����Y���LNHL�
+SLL�N[M�M�
+�Mȋ��ۛ�Y��L�HM]�L��KL��
+XL��KL�L��MM�L
+H
+H
+KMSLL�MU�ȋ�\��]�N��L�H�L�ՎLH����R^�LLL�
+���\�ܙN��L�L�NHHLNHHLN�L�L�
+LL���ȋ��ܝ��L�
+�
+�L�L�
+SL�N�LM�
+��L�LL�M[���Lȋ��^X��\���L�
+���L���M�L�SLLL�SLML�SLNL�SNM��N���8� 8� 8� �]\�X�H��\ۙ[��8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��ۜ��Y�HH
+�X�[��܋��۔�[[ݙK�[HH�HJHO�
+��[��\�Ә[YOH�؋X�Y�H��[O^��\�^N��[�[�KY�^�[Yے][\Έ��[�\���\�
+Y[�Έ��L��ܙ\��Y]\ΈNNNK�۝�^�N�L�۝�ZY��
+�]\��X�[�Έ���[H�^�[�ٛܛN��\\��\�H���܋�X��ܛ�[�����]T�X�N����ܘ\�����[H_O���X�[^�۔�[[ݙH	���[�ې�X��^�JHO��K�����Y�][ۊ
+N�۔�[[ݙJ
+N�_H�[O^���\��܎���[�\��X\��[�Y��
+�X�]N����۝�^�N�L�[�RZY��H_O�����[��B���[���N��ۜ���H
+��[�[�ې�X���\�X[�H�Y�][��[HH�K\�X�YH�[�K]HH������\�JHO��ۜ��\�HH�\�^N��[�[�KY�^�[Yے][\Έ��[�\���\�
+�Y[�Έ��M��ܙ\��Y]\Έ�ܙ\����ۙH��\��܎�\�X�Y����X[��Y����[�\���۝�^�N�L��۝�ZY��
+L�X�]N�\�X�Y��H�HN�ۜ��HY�][���X��ܛ�[��˜�\��X�K��܎�˝^�ܙ\��\��Y	�˘�ܙ\�XK��[X\�N���X��ܛ�[��˘X��[�ܘY��܎��ٙ����۝�ZY��
+�K�������X��ܛ�[����[��\�[����܎�˝^]]YY[�Έ�\�K�[��\����X��ܛ�[��˜�Y����܎�˜�YK��X��\�Έ��X��ܛ�[��˙ܙY[�����܎�˙ܙY[�K�N�]\���]ۈ�\�Ә[YO^�؋X��	ݘ\�X[�OOH��[X\�H���؋X��\�[X\�H����XHې�X��^�\�X�Y�[�Y�[�Y�ې�X��H�[O^������\�K����ݘ\�X[�K����[H_H]O^�]_Hˋ���\�O���[�[�O؝]ۏ�N��ۜ�[�]H
+��[HH�K������JHO�
+�[�]�\�Ә[YOH�؋Z[�]�ˋ�����H�[O^���Y��L	H�Y[�Έ�\M��ܙ\��Y]\ΈL�ܙ\��\��Y	�˘�ܙ\�X�X��ܛ�[��˜�\��X�K��܎�˝^�۝�^�N�L��][�N���ۙH��[��][ێ��[���X\�H�����[H_Hς�N��ۜ�^\�XHH
+��[HH�K������JHO�
+�^\�XH�\�Ә[YOH�؋Z[�]�ˋ�����H�[O^���Y��L	H�Y[�Έ�L�M��ܙ\��Y]\ΈL�ܙ\��\��Y	�˘�ܙ\�X�X��ܛ�[��˜�\��X�K��܎�˝^�۝�^�N�L��۝�[Z[N��[�\�]��\�^�N���\�X�[��][�N���ۙH�Z[�ZY��L�[�RZY��K���[��][ێ��[���X\�H�����[H_Hς�N��ۜ��[X�H
+��[YKې�[��K�[�[��[HH�HJHO�
+��[X��[YO^ݘ[Y_Hې�[��O^�ې�[��_H�[O^��Y[�Έ��L��ܙ\��Y]\Έ�ܙ\��\��Y	�˘�ܙ\�X�X��ܛ�[��˜�\��X�K��܎�˝^�۝�^�N�L��][�N���ۙH��\��܎���[�\������[H_O���[�[�O��[X���N���8� 8� 8� �\���Y�X�][ۈ8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��[��[ۈ�\�
+�Y\��Y�KۑۙHJH\�QY��X�
+
+
+HO���ۜ�H�][Y[�]
+ۑۙK�
+N��]\��
+
+HO��X\�[Y[�]
+
+N�K�ۑۙWJN�]\��
+�]��[O^����][ێ���^Y����N���Y����X��ܛ�[��˘X��[�ܘY��܎��ٙ���Y[�Έ�L�����ܙ\��Y]\ΈL��۝�^�N�L��۝�ZY��
+��[�^�����Y�Έ�̜�ؘJM��L�K�L��K��ؘJ�
+H�[�[X][ێ���\�[�����X�X�X�^�Y\���K�M���JH�]\��X�[�Έ��Y[H�\�^N���^�[Yے][\Έ��[�\���\�_O��X�ۈ^�K��X��H�^�O^�MH��܏H�ٙ���Ϟ�Y\��Y�_B��]���
+NB����8� 8� 8� �^X��\��ܝ�][[�[8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��[��[ۈ�ܝ�][
+�ې���HJH�ۜ��ܝ�]�HȐ��
+�����]���H�K�Ȑ��
+�ȋ����\��X\���K�Ȑ��
+�H�����\���\��K�Ȑ��
+���������\ȗK�Ȑ��
+�ȋ����X�[ۈ��\��K�Ȑ��
+�H��^ܝ]H�K�Ȑ��
+�H��[\ܝ]H�K�ȑ\��\H�����H[�[��X�ȗK�ȏȋ����\�[�K�N�]\��
+�]��\�Ә[YOH�؋[[�[[ݙ\�^H��[O^����][ێ���^Y�[��]��X��ܛ�[����ؘJ��H��X�����[\����\�
+
+H�\�^N���^�[Yے][\Έ��[�\���\�Y�P�۝[����[�\���[�^�ML_Hې�X��^�ې���_O��]��\�Ә[YOH�؋[[�[X�۝[��ې�X��^�JHO�K�����Y�][ۊ
+_H�[O^���Y�
+�Y[�Έ��ܙ\��Y]\ΈN�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X���Y�Έ��
+�ؘJ�JH�_O��]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�M�_O����[O^���۝�^�N�M��۝�ZY��
+�_O��^X��\��ܝ�]��ς����\�X[�H�����ې�X��^�ې���_O�X�ۈ^�K�H�^�O^�M�HϏН����]�����ܝ�]˛X\
+
+��^K\��JHO�
+�]��^O^��^_H�[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��Y[�Έ���ܙ\����N�\��Y	�˘�ܙ\�X_O���[��[O^���۝�^�N�L���܎�˝^]]Y_O��\��O��[���ؙ�[O^���X��ܛ�[��˜�\��X�KY[�Έ����ܙ\��Y]\Έ
+�۝�^�N�L��۝�[Z[N��[ۛ��X�H���܎�˘X��[�Y��ܙ\��\��Y	�˘�ܙ\�X_O���^_O�ؙ���]���
+J_B��]����]���
+NB����8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d���PRS�T���8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d���8� 8� 8� \��\�[��H[\��8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��ۜ��ԐQ�W��VHH��X�ۙX��Z[�Y]H��ۜ��Y]HH
+
+HO��H�ۜ��]�H��[�ܘY�K��]][J�ԐQ�W��VJNY�
+�]�H��ۜ�H��Ӌ�\��J�]�N��]\�����\Έ���\��KX�[ۜΈ�X�[ۜ��HN�B�H�]��B��]\���[N�ۜ��]�Q]HH
+��\�X�[ۜ�HO��H���[�ܘY�K��]][J�ԐQ�W��VK��Ӌ���[��Y�J���\�X�[ۜ��]�Y]��]�]J
+K��T����[��
+HJJN�H�]��B�N���8� 8� 8� �ۙ�\�X][ۈX[��8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� 8� ��[��[ۈ�ۙ�\�QX[���Y\��Y�Kې�ۙ�\�Kې�[��[JH�]\��
+�]��\�Ә[YOH�؋[[�[[ݙ\�^H��[O^����][ێ���^Y�[��]��X��ܛ�[����ؘJ��H��X�����[\����\�
+
+H�\�^N���^�[Yے][\Έ��[�\���\�Y�P�۝[����[�\���[�^��_Hې�X��^�ې�[��[O��]��\�Ә[YOH�؋[[�[X�۝[��ې�X��^�JHO�K�����Y�][ۊ
+_H�[O^���Y�͌Y[�Έ��ܙ\��Y]\ΈN�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X���Y�Έ��
+�ؘJ�JH�^[Yێ���[�\��_O��]��[O^���۝�^�N�̋X\��[����N�L�_O����]���]��[O^���۝�^�N�M�۝�ZY��
+�X\��[����N���܎�˝^_O��Y\��Y�_O�]���]��[O^���۝�^�N�L���܎�˝^]]YX\��[����N��_O�\�X�[ۈ�[����H[�ۙK��]���]��[O^��\�^N���^��\�L�\�Y�P�۝[����[�\��_O����ې�X��^�ې�[��[H�[O^��Z[��Y�L_O��[��[Н������\�X[�H�[��\��ې�X��^�ې�ۙ�\�_H�[O^��Z[��Y�L_O�[]OН����]����]����]���
+NB��^ܝY�][�[��[ۈ�X�ۙ��Z[�\���\�
+
+H�ۜ��]�YH\�SY[[�
+
+HO��Y]J
+K�JN�ۜ�ݚY]��]�Y]�HH\�T�]J�\���\��N�ۜ�ۛ�\��]��\�HH\�T�]J�]�Y˛��\�˛[����]�Y���\���STWӓ�T�N�ۜ��X�[ۜ��]X�[ۜ�HH\�T�]J�]�Y˘X�[ۜ�˛[����]�Y�X�[ۜ���STW�P�SӔ�N�ۜ���ۙ�\�QX[���]�ۙ�\�QX[��HH\�T�]J�[
+N����Y\��Y�Kې�ۙ�\�HB��ۜ���X\��]Y\�K�]�X\��]Y\�WHH\�T�]J��N�ۜ���[X�YY���]�[X�YY��HH\�T�]J�JN�ۜ���[X�Y��K�]�[X�Y��WHH\�T�]J�[
+N�ۜ���Y�][K�]�Y�][WHH\�T�]J�[
+N�ۜ�����\��]�Y�]���\��]�YHH\�T�]J�[�JN�ۜ���ܝ�K�]�ܝ�WHH\�T�]J��]�\��N����]�\��\�]K��\��B��ۜ���\��]�\�HH\�T�]J�[
+N�ۜ������ܝ�]��]����ܝ�]�HH\�T�]J�[�JN�ۜ���YX�\��[��]�YX�\��[�HH\�T�]J�YJN���[�Z�H�]B��ۜ��[�Z�S[�K�][�Z�S[�WHH\�T�]J�\�H�N�ۜ��[�Z�U]K�][�Z�U]WHH\�T�]J��N�ۜ��[�Z�P��K�][�Z�P��WHH\�T�]J��N�ۜ��[�Z�P]]��X[��][�Z�P]]��X[�HH\�T�]J�YJN�ۜ��[�Z�P]]�^�X��][�Z�P]]�^�X�HH\�T�]J�YJN���Y]�]\�ۜ��Y][��X�[ۋ�]Y][��X�[ۗHH\�T�]J�[
+N�ۜ��Y][�ӛ�K�]Y][�ӛ�WHH\�T�]J�[
+N����Y]K��KY��B���ۜ��X\���Y�H\�T�Y��[
+N�ۜ��[R[�]�Y�H\�T�Y��[
+N�ۜ�[\ܝ[�]�Y�H\�T�Y��[
+N���8� 8� ]]�\�]�H���[�ܘY�H8� 8� �\�QY��X�
+
+
+HO���]�Q]J��\�X�[ۜ�N�Kۛ�\�X�[ۜ�JN���8� 8� �^X��\��ܝ�]�8� 8� �\�QY��X�
+
+
+HO��ۜ�[�\�H
+JHO��ۜ���HK����^HK�Y]R�^NY�
+��	��K��^HOOH���H�K��]�[�Y�][
+
+N��]�Y]��[�Z�H�N�B�[�HY�
+��	��K��^HOOH�ȊH�K��]�[�Y�][
+
+N��X\���Y���\��[�˙���\�
+N�B�[�HY�
+��	��K��^HOOH�H�H�K��]�[�Y�][
+
+N��]�Y]��\���\��N�B�[�HY�
+��	��K��^HOOH���H�K��]�[�Y�][
+
+N��]�Y]����\ȊN�B�[�HY�
+��	��K��^HOOH�ȊH�K��]�[�Y�][
+
+N��]�Y]���[��[��N�B�[�HY�
+��	��K��^HOOH�H�H�K��]�[�Y�][
+
+N�[�Q^ܝ
+
+N�B�[�HY�
+��	��K��^HOOH�H�H�K��]�[�Y�][
+
+N�[\ܝ[�]�Y���\��[�˘�X��
+N�B�[�HY�
+K��^HOOH�\��\H�HY�
+Y][��X�[ۊH�]Y][��X�[ۊ�[
+N[�HY�
+Y][�ӛ�JH�]Y][�ӛ�J�[
+N[�HY�
+����ܝ�]�H�]����ܝ�]��[�JN[�HY�
+�Y]�OOH���Q]Z[�H�]�Y]����\ȊN[�HY�
+�Y]�OOH�[�Z�H�H�]�Y]����\ȊNB�[�HY�
+K��^HOOH�Ȉ	��X��	����[Y[��X�]�Q[[Y[��YӘ[YHOOH�S�U�	����[Y[��X�]�Q[[Y[��YӘ[YHOOH�VT�PH�HK��]�[�Y�][
+
+N��]����ܝ�]��YJNB�N�[��˘Y]�[�\�[�\���^Y�ۈ�[�\�N�]\��
+
+HO��[��˜�[[ݙQ]�[�\�[�\���^Y�ۈ�[�\�NKݚY]�Y][��X�[ۋY][�ӛ�K����ܝ�]�JN���8� 8� ^ܝ8� 8� ��ۜ�[�Q^ܝH
+
+HO��ۜ�]HH��Ӌ���[��Y�J���\�X�[ۜ�^ܝY]����
+HK�[�N�ۜ��؈H�]��؊�]WK�\N��\X�][ۋڜ�ۈ�JN�ۜ�\�HT��ܙX]Sؚ�X�T�
+�؊N�ۜ�HH��[Y[��ܙX]Q[[Y[�
+�H�NK��Y�H\��K��ۛ�YH�X�ۙX��Z[�Iۙ]�]J
+K��T����[��
+K��X�JL
+_K���ۘK��X��
+N�T���]���Sؚ�X�T�
+\�
+N�]�\�
+�]H^ܝY�X��\�ٝ[H�NN���8� 8� [\ܝ8� 8� ��ۜ�[�R[\ܝH
+JHO��ۜ��[HHK�\��]��[\��NY�
+Y�[JH�]\���ۜ��XY\�H�]��[T�XY\�
+N�XY\��ۛ�YH
+]�HO��H�ۜ�]HH��Ӌ�\��J]��\��]��\�[
+NY�
+]K���\�	��\��^K�\�\��^J]K���\�JH�]��\�]K���\˛X\
+�O�
+�����\��]�Y���\��]�Y���[�HJJJNB�Y�
+]K�X�[ۜ�	��\��^K�\�\��^J]K�X�[ۜ�JH�]X�[ۜ�]K�X�[ۜ�N�]�\�
+[\ܝY	�]K���\�˛[��H��\�[�	�]K�X�[ۜ�˛[��HX�[ۜ�
+NH�]���]�\�
+��Z[Y�\��H[\ܝ�[H�N�B�N�XY\���XY\�^
+�[JNK�\��]��[YHH��N���8� 8� �[H\�Y�܈��H[�Z�H8� 8� ��ۜ�[�Q�[U\�YH
+JHO��ۜ��[HHK�\��]��[\��NY�
+Y�[JH�]\���ۜ��XY\�H�]��[T�XY\�
+N�XY\��ۛ�YH
+]�HO��][�Z�P��J]��\��]��\�[
+NY�
+Z[�Z�U]JH�][�Z�U]J�[K��[YK��\X�J��Y^X\���ۊI�K��JN�]�\�
+�YY�ٚ[K��[Y_H�
+NN�XY\���XY\�^
+�[JNK�\��]��[YHH��N���8� 8� ��[�\��܈�[H\�Y8� 8� ��ۜ�[�Q��H\�P�[�X��
+JHO�K��]�[�Y�][
+
+N�ۜ��[HHK�]U�[�ٙ\�˙�[\�˖�NY�
+Y�[JH�]\��Y�
+K��Y^X\���ۊI�K�\�
+�[K��[YJJH��]�\�
+�ۛH�[��Y�[\��\ܝY�N��]\���B��ۜ��XY\�H�]��[T�XY\�
+N�XY\��ۛ�YH
+]�HO��][�Z�P��J]��\��]��\�[
+NY�
+Z[�Z�U]JH�][�Z�U]J�[K��[YK��\X�J��Y^X\���ۊI�K��JN�]�\�
+�YY�ٚ[K��[Y_H�
+NN�XY\���XY\�^
+�[JNK�[�Z�U]WJN���8� 8� Y[[�^�Y��\]Y�[Y\�8� 8� ��ۜ�[Y��H\�SY[[�
+
+HO��ˋ���]��]
+ˋ����\˙�[\��O�[��\��]�Y
+K��]X\
+
+�HO���Y��K���X�[ۜ˙�]X\
+
+JHO�K�Y��WJWK��ܝ
+
+K�ۛ�\�X�[ۜ�B�
+N��ۜ�HH�X\��]Y\�K����\��\�J
+N��ۜ��[\�Y��\�H\�SY[[�
+
+HO��ۜ��[\�YH��\˙�[\�
+�HO�Y�
+\���\��]�Y	����\��]�Y
+H�]\���[�NY�
+���\��]�Y	��[��\��]�Y
+H�]\���[�N�ۜ�X]�\��X\��H\H��]K����\��\�J
+K�[��Y\�JH����K����\��\�J
+K�[��Y\�JH��Y�˜��YJ
+
+HO��[��Y\�JJN�ۜ�X]�\�Y��H�[X�YY�˛[��OOH�[X�YY�˙]�\�J
+
+HO���Y�˚[��Y\�
+JN�]\��X]�\��X\��	��X]�\�Y��JN�ۜ��ܝYHˋ���[\�YNY�
+�ܝ�HOOH��]�\��H�ܝY��ܝ
+
+K�HO���ܙX]Y]���[P��\\�JK�ܙX]Y]
+JN[�HY�
+�ܝ�HOOH��\��H�ܝY��ܝ
+
+K�HO�K�ܙX]Y]���[P��\\�J��ܙX]Y]
+JN[�HY�
+�ܝ�HOOH�]H�H�ܝY��ܝ
+
+K�HO�K�]K���[P��\\�J��]JJN[�HY�
+�ܝ�HOOH���\��H�H�ܝY��ܝ
+
+K�HO�K���\��K���[P��\\�J����\��JJN�]\���ܝYKۛ�\�K�[X�YY�����\��]�Y�ܝ�WJN��ۜ��[\�YX�[ۜ�H\�SY[[�
+
+HO��X�[ۜ˙�[\�
+JHO��ۜ�X]�\��X\��H\HK�^����\��\�J
+K�[��Y\�JHK�Y�˜��YJ
+
+HO��[��Y\�JJN�ۜ�X]�\�Y��H�[X�YY�˛[��OOH�[X�YY�˙]�\�J
+
+HO�K�Y�˚[��Y\�
+JN�]\��X]�\��X\��	��X]�\�Y��JK��X�[ۜ�K�[X�YY��B�
+N���8� 8� ��HԕQ8� 8� ��ۜ�[�T�]�S��HH
+
+HO�Y�
+Z[�Z�P��K��[J
+JH�]\���ۜ��X[�YH[�Z�P]]��X[���X[���J[�Z�P��JH�[�Z�P��K��[J
+N�ۜ�Y��H^�X�Y���X[�Y
+N�ۜ�]HH[�Z�U]K��[J
+H�X[�Y��]
+���V�K��X�J
+�
+H�[�]Y��H��ۜ���HH�Y�ZY
+
+K]K��N��X[�Y��\��N�[�Z�S[�KY��ܙX]Y]����
+K\��]�Y��[�HN�]��\�
+�]�HO�ۛ�K����]�JNY�
+[�Z�P]]�^�X�
+H�ۜ�^�X�YH^�X�X�[ۜ��X[�Y
+NY�
+^�X�Y�[���
+H�ۜ��]�X�[ۜ�H^�X�Y�X\
+
+
+HO�
+�Y�ZY
+
+K^��]\Έ��ȋ�[ܚ]N��YY][H�Y����RY���K�YܙX]Y]����
+KYQ]N���JJN�]X�[ۜ�
+�]�HO�ˋ���]�X�[ۜ�����]�JNB�B��][�Z�U]J��N��][�Z�P��J��N�]�\�
+���H�]�Y�N��]�Y]����\ȊNN��ۜ�[�U\]S��HH
+
+HO�Y�
+YY][�ӛ�JH�]\���ۜ�Y��H^�X�Y��Y][�ӛ�K���JN�]��\�
+�]�HO��]��X\
+
+�HO���YOOHY][�ӛ�K�Y������]N�Y][�ӛ�K�]K��N�Y][�ӛ�K���KY��H��JNY�
+�[X�Y��O˚YOOHY][�ӛ�K�Y
+H�]�[X�Y��J�����[X�Y��K]N�Y][�ӛ�K�]K��N�Y][�ӛ�K���KY��JN�]Y][�ӛ�J�[
+N�]�\�
+���H\]Y�NN��ۜ�\��]�S��HH
+Y
+HO��]��\�
+�]�HO��]��X\
+
+�HO���YOOHY������\��]�Y��YHH��JNY�
+�[X�Y��O˚YOOHY
+H��]�[X�Y��J�[
+N��]�Y]����\ȊN�B��]�\�
+���H\��]�Y�NN�ۜ��\�ܙS��HH
+Y
+HO��]��\�
+�]�HO��]��X\
+
+�HO���YOOHY������\��]�Y��[�HH��JN�]�\�
+���H�\�ܙY�NN�ۜ�[]S��HH
+Y
+HO��]�ۙ�\�QX[��Y\��Y�N��\�X[�[�H[]H\���H[�[[��YX�[ۜ�ȋ�ې�ۙ�\�N�
+
+HO��]��\�
+�]�HO��]���[\�
+�HO���YOOHY
+JN�]X�[ۜ�
+�]�HO��]���[\�
+JHO�K���RYOOHY
+JNY�
+�[X�Y��O˚YOOHY
+H��]�[X�Y��J�[
+N��]�Y]����\ȊN�B��]�ۙ�\�QX[���[
+N�]�\�
+���H\�X[�[�H[]Y�NK�JNN���8� 8� X�[ۈԕQ8� 8� ��ۜ�\]PX�[ۈH
+Y\]\�HO��]X�[ۜ�
+�]�HO��]��X\
+
+JHO�
+K�YOOHY�����K���\]\�H�JJJN�ۜ�[]PX�[ۈH
+Y
+HO��]�ۙ�\�QX[��Y\��Y�N��[]H\�X�[ۈ][Oȋ�ې�ۙ�\�N�
+
+HO���]X�[ۜ�
+�]�HO��]���[\�
+JHO�K�YOOHY
+JN��]�ۙ�\�QX[���[
+N��]�\�
+�X�[ۈ[]Y�N�K�JNN�ۜ�YX�[ۈH
+
+HO��ۜ�HH�Y�ZY
+
+K^���]�X�[ۈ][H��]\Έ��ȋ�[ܚ]N��YY][H�Y�Έ�K��RY��[ܙX]Y]����
+KYQ]N���N�]X�[ۜ�
+�]�HO��K����]�JN�]Y][��X�[ۊJNN���8� 8� �[��[��Y�8� 8� ��ۜ�[�Q�Y��\�H
+X�[ےY
+HO��]�Y�][JX�[ےY
+N�ۜ�[�R�[��[���H
+�]��]\�HO��Y�
+�Y�][JH�\]PX�[ۊ�Y�][K��]\Έ�]��]\�JN��]�Y�][J�[
+N�HN���8� 8� �]�
+Y[[�^�Y
+H8� 8� ��ۜ�X�]�S��\�H\�SY[[�
+
+HO���\˙�[\��O�[��\��]�Y
+Kۛ�\�JN�ۜ��]�H\�SY[[�
+
+HO�
+�[��\ΈX�]�S��\˛[����[X�[ۜΈX�[ۜ˙�[\�
+JHO�K��]\�OOH�ۙH�K�[���ݙ\�YN�X�[ۜ˙�[\�
+JHO�K�YQ]H	��K��]\�OOH�ۙH�	���]�]JK�YQ]JH�]�]J
+JK�[���ۙU\��YZΈX�[ۜ˙�[\�
+JHO��Y�
+K��]\�OOH�ۙH�H�]\���[�N��ۜ�H�]�]JK�ܙX]Y]
+N��ۜ��YZ�H�]�]J
+N��YZ˜�]]J�YZ˙�]]J
+HH
+�N��]\���H�YZ��JK�[���JK�X�]�S��\�X�[ۜ�JN���8� 8� �\�ۜ�]�H�YX�\�8� 8� ��ۜ��YU�H�YX�\��[��������8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d����QU���8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d���ۜ�\���\��Y]�H
+
+HO�
+�]�����[O^���۝�^�N����۝�ZY��
+�X\��[����N��\�^N���^�[Yے][\Έ��[�\���\�L_O��X�ۈ^�K���Z[�H�^�O^̍H��܏^�˘X��[�Hψ\���\������]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ��\X]
+]]�Y�]Z[�X^
+MY��JH��\�MX\��[����N��_O����X�[����\ȋ�[YN��]˝�[��\���܎�˘X��[�X�ێ�K���HK��X�[���[�X�[ۜȋ�[YN��]˝�[X�[ۜ���܎�˘[X�\�X�ێ�K��[��[�K��X�[��ݙ\�YH��[YN��]˛ݙ\�YK��܎�˜�YX�ێ�K�����K��X�[��ۙH\��YZȋ�[YN��]˙ۙU\��YZ���܎�˙ܙY[�X�ێ�K��X��K�K�X\
+
+�HO�
+�]��^O^�˛X�[H�\�Ә[YOH�؋\�]X�\���[O^���K\�]X��܈��˘��܋Y[�Έ������ܙ\��Y]\ΈM�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X�\��܎��Y�][�_O��]��[O^��\�^N���^�[Yے][\Έ��[�\���\�X\��[����N�L_O��]��[O^��Y[�Έ
+��ܙ\��Y]\Έ�X��ܛ�[��˘��܈
+��MH�_O��X�ۈ^�˚X�۟H�^�O^�M_H��܏^�˘��ܟHς��]����[��[O^���۝�^�N�LK��܎�˝^]]Y�۝�ZY��
+L]\��X�[�Έ��
+[H�^�[�ٛܛN��\\��\�H�_O��˛X�[O��[����]���]��[O^���۝�^�N�̋�۝�ZY����܎�˘��܋]\��X�[�Έ�L��[H�_O��˝�[Y_O�]����]���
+J_B��]���]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ��\X]
+]]�Y�]Z[�X^
+̌Y��JH��\��_O��]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�L�_O����[O^���۝�^�N�MK�۝�ZY��
+�_O��X�[���\��ς����\�X[�H�����ې�X��^�
+HO��]�Y]����\Ȋ_H�[O^���۝�^�N�L�_O��Y]�[8���Н����]����X�]�S��\˜�X�J�K�X\
+
+��JHO�
+�]��^O^ۛ�K�YHې�X��^�
+HO���]�[X�Y��J��JN��]�Y]����Q]Z[�N�_H�[O^��Y[�ΈM�ܙ\��Y]\ΈL�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X�\��܎���[�\��X\��[����N�_O��]��[O^���۝�^�N�L��۝�ZY��
+�X\��[����N�
+_O�ۛ�K�]_O�]���]��[O^���۝�^�N�L���܎�˝^]]YX\��[����N�
+�_O�ۛ�K���K��\X�J��ʸ����!x�(��K����K��X�JL
+_x�)��]���]��[O^��\�^N���^��\�
+�^ܘ\��ܘ\�_O��ۛ�K�Y�˜�X�J�K�X\
+
+
+HO��Y�H�^O^�HX�[^�H��܏^�˘X��[�Y�H��^�˘X��[���Hϊ_B��]����]���
+J_B��]���]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�L�_O����[O^���۝�^�N�MK�۝�ZY��
+�_O�\��[�X�[ۜ��ς����\�X[�H�����ې�X��^�
+HO��]�Y]���[��[��_H�[O^���۝�^�N�L�_O��Y]���\�8���Н����]����X�[ۜ˙�[\�
+JHO�K��]\�OOH�ۙH�	��K��[ܚ]HOOH�Y��K��X�J
+JK�X\
+
+JHO��ۜ�\�ݙ\�YHHK�YQ]H	���]�]JK�YQ]JH�]�]J
+N�]\��
+�]��^O^�K�YH�[O^��Y[�ΈL��ܙ\��Y]\ΈL�X��ܛ�[��˘�\��ܙ\��\��Y	�\�ݙ\�YH�˜�Y
+����˘�ܙ\�X\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�_O���[��[O^���۝�^�N�L��^�H_O��K�^O��[���]��[O^��\�^N���^��\�
+�[Yے][\Έ��[�\���^��[�Έ_O���\�ݙ\�YH	���Y�HX�[H�ՑT�QH���܏^�˜�YH��^�˜�Y��HϟB��K�YQ]H	���[��[O^���۝�^�N�LK��܎�\�ݙ\�YH�˜�Y�˝^[H_O�ٛ]
+K�YQ]J_O��[��B��]����]���
+NJ_B��X�[ۜ˙�[\�
+JHO�K��]\�OOH�ۙH�	��K��[ܚ]HOOH�Y��K�[��OOH	��
+�]��[O^��Y[�Έ�^[Yێ���[�\����܎�˝^[K�۝�^�N�L�_O���\��[�X�[ۜ�8�%�X�H�ܚ�O�]���
+_B��]����]����]���
+N��ۜ���\՚Y]�H
+
+HO�
+�]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�M��^ܘ\��ܘ\��\�L_O����[O^���۝�^�N����۝�ZY��
+�\�^N���^�[Yے][\Έ��[�\���\�L_O��X�ۈ^����\��]�Y�K�\��]�H�K���_H�^�O^̍H��܏^�˘X��[�Hς�����\��]�Y��\��]�H�����\ȟB��[��[O^���۝�^�N�L��۝�ZY��
+��܎�˝^]]Y_O�ٚ[\�Y��\˛[��JO��[�������]��[O^��\�^N���^��\�[Yے][\Έ��[�\���^ܘ\��ܘ\�_O�����\�X[�^����\��]�Y���X��\�Ȉ������Hې�X��^�
+HO��]���\��]�Y
+\���\��]�Y
+_H]OH����H\��]�H���X�ۈ^�K�\��]�_H�^�O^�MH��܏^����\��]�Y�˙ܙY[��˝^]]YHψ����\��]�Y��X�]�H���\��]�H�B�Н���]��[O^��\�^N���^�[Yے][\Έ��[�\���\�
+_O��X�ۈ^�K��ܝH�^�O^�MHς��[X��[YO^��ܝ�_Hې�[��O^�JHO��]�ܝ�JK�\��]��[YJ_O���[ۈ�[YOH��]�\����]�\���[ۏ���[ۈ�[YOH��\����\���[ۏ���[ۈ�[YOH�]H��]HKV���[ۏ���[ۈ�[YOH���\��H����\��O��[ۏ����[X����]������\�X[�H��[X\�H�ې�X��^�
+HO��]�Y]��[�Z�H�_O��X�ۈ^�K�\�H�^�O^�MH��܏H�ٙ���ψY��B�Н����]����]���]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ��\X]
+]]�Y�[Z[�X^
+��Y��JH��\�M_O��ٚ[\�Y��\˛X\
+
+��KY
+HO�
+�]��^O^ۛ�K�YH�\�Ә[YOH�؋X�\��ې�X��^�
+HO���]�[X�Y��J��JN��]�Y]����Q]Z[�N�_H�[O^��Y[�ΈN�ܙ\��Y]\ΈM�X��ܛ�[��˘�\��ܙ\��\��Y	ۛ�K�\��]�Y�˝^[H
+�����˘�ܙ\�X�\��܎���[�\���X�]N���K�\��]�Y���H�K[�[X][ێ��YU\���X\�H	�Y
+��
+\���_O��]��[O^���۝�^�N�M�۝�ZY��
+�X\��[����N�[�RZY��K��_O�ۛ�K�]_O�]���]��[O^���۝�^�N�L���܎�˝^]]YX\��[����N�L�[�RZY��K��X^ZY��
+�ݙ\���Έ�Y[��_O��ۛ�K���K��\X�J��ʸ����!x�(��K����K��X�JML
+_B��]���]��[O^��\�^N���^��^ܘ\��ܘ\��\�
+X\��[����N�L_O��ۛ�K�Y�˜�X�J
+K�X\
+
+
+HO��Y�H�^O^�HX�[^�H��܏^�˘X��[�Y�H��^�˘X��[���Hϊ_B��]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��Y[�����ܙ\���\��Y	�˘�ܙ\�X_O���[��[O^���۝�^�N�LK��܎�˝^[H_O�ٛ]
+��K�ܙX]Y]
+_O��[����Y�HX�[^ۛ�K���\��_H��܏^�˝^]]YH��^�˜�\��X�_Hς��]����]���
+J_B��]���ٚ[\�Y��\˛[��OOH	��
+�]��[O^��Y[�Έ����^[Yێ���[�\��_O��]��[O^���۝�^�N�
+X\��[����N�M��X�]N���_O�����\��]�Y��'�鈈��X\��]Y\�H�[X�YY�˛[����'�#H���'��H�O�]���]��[O^���۝�^�N�MK�۝�ZY��
+���܎�˝^]]YX\��[����N�_O������\��]�Y����\��]�Y��\Ȉ��X\��]Y\�H�[X�YY�˛[������X]�\���[����[�\��X�ۙ��Z[�\�[\H�B��]���]��[O^���۝�^�N�L���܎�˝^[KX^�Y��X\��[���]]ȋ[�RZY��K��_O������\��]�Y����\�[�H\��]�H�[\X\�\�K����X\��]Y\�H�[X�YY�˛[�����HHY��\�[��X\��\�H܈�X\�[�\��[\�ˈ����\\�H[�\��\��YY][����KYXK܈�X���XY��]�\�Y��B��]����\���\��]�Y	��\�X\��]Y\�H	���[X�YY�˛[��OOH	��
+����\�X[�H��[X\�H�ې�X��^�
+HO��]�Y]��[�Z�H�_H�[O^��X\��[����_O��X�ۈ^�K�\�H�^�O^�MH��܏H�ٙ���ψY[�\��\����B�Н���
+_B��]���
+_B��]���
+N��ۜ���Q]Z[�Y]�H
+
+HO�Y�
+\�[X�Y��JH�]\���[�ۜ���HH��\˙�[�
+�O���YOOH�[X�Y��K�Y
+H�[X�Y��N�ۜ���PX�[ۜ�HX�[ۜ˙�[\�
+JHO�K���RYOOH��K�Y
+N�]\��
+�]������\�X[�H�����ې�X��^�
+HO���]�Y]����\ȊN��]�[X�Y��J�[
+N�_H�[O^��X\��[����N�M�_O��X�ۈ^�K�\����Y�H�^�O^�MHψ�X�����\Н���]��[O^��Y[�Έ��ܙ\��Y]\ΈM��X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X��][ێ���[]]�H�ݙ\���Έ�Y[��_O��]��[O^����][ێ��X���]H���Y���Y��ZY����X��ܛ�[��˘X��[�ܘY_Hς�]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��^\�\��X\��[����N�M��^ܘ\��ܘ\��\�_O����[O^���۝�^�N����۝�ZY��
+��^�K]\��X�[�Έ�L�Y[H�_O�ۛ�K�]_O����]��[O^��\�^N���^��\�
+�_O�����\�X[�H�����ې�X��^�
+HO��]Y][�ӛ�J�Y���K�Y]N���K�]K��N���K���HJ_H]OH�Y]��H���X�ۈ^�K�Y]H�^�O^�MH��܏^�˘X��[�Hς�Н���ۛ�K�\��]�Y�
+����\�X[�H��X��\�Ȉې�X��^�
+HO��\�ܙS��J��K�Y
+_H�[O^���۝�^�N�L�_O��X�ۈ^�K��\�ܙ_H�^�O^�L�H��܏^�˙ܙY[�Hψ�\�ܙB�Н���
+H�
+���ې�X��^�
+HO�\��]�S��J��K�Y
+_H�[O^���۝�^�N�L�_O��X�ۈ^�K�\��]�_H�^�O^�L�Hψ\��]�B�Н���
+_B����\�X[�H�[��\��ې�X��^�
+HO�[]S��J��K�Y
+_H�[O^���۝�^�N�L�_O��X�ۈ^�K��\�H�^�O^�L�H��܏^�˜�YHψ[]B�Н����]����]���]��[O^��\�^N���^��\�L�X\��[����N�M��^ܘ\��ܘ\�[Yے][\Έ��[�\��_O���[��[O^���۝�^�N�L���܎�˝^[H_O�ٛ][YJ��K�ܙX]Y]
+_O��[����Y�HX�[^ۛ�K���\��_H��܏^�˝^]]YH��^�˜�\��X�_Hς�ۛ�K�\��]�Y	���Y�HX�[H�\��]�Y���܏^�˝^[_H��^�˜�\��X�_HϟB�ۛ�K�Y�˛X\
+
+
+HO��Y�H�^O^�HX�[^�H��܏^�˘X��[�Y�H��^�˘X��[���Hϊ_B��]���]��[O^���ܙ\���\��Y	�˘�ܙ\�XY[����M�_O���X���H^^ۛ�K���_Hς��]����]���ۛ�PX�[ۜ˛[���	��
+�]��[O^��X\��[����_O����[O^���۝�^�N�MK�۝�ZY��
+�X\��[����N�L�_O�[��YX�[ۈ][\�
+ۛ�PX�[ۜ˛[��JO�ς�ۛ�PX�[ۜ˛X\
+
+JHO��ۜ��HH�SԒUW���Ԕ��K��[ܚ]WN�ۜ���H�S��S����˙�[�
+
+�HO�˚�^HOOHK��]\�N�]\��
+�]��^O^�K�YH�[O^��Y[�ΈL��ܙ\��Y]\ΈL�X��ܛ�[��˜�\��X�K�ܙ\��\��Y	�˘�ܙ\�XX\��[����N�\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��_O���[��[O^���۝�^�N�L�^X�ܘ][ێ�K��]\�OOH�ۙH���[�K]��Y�����ۙH��X�]N�K��]\�OOH�ۙH�����H_O��K�^O��[���]��[O^��\�^N���^��\�
+�_O���Y�HX�[^���˛X�[H��܏^���˘��ܟH��^���˘��Hς��Y�HX�[^��K�X�[H��܏^��K���ܟH��^��K���Hς��]����]���
+NJ_B��]���
+_B��]���
+NN��ۜ��[��[��Y]�H
+
+HO�
+�]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N��_O����[O^���۝�^�N����۝�ZY��
+�\�^N���^�[Yے][\Έ��[�\���\�L_O��X�ۈ^�K��[��[�H�^�O^̍H��܏^�˘X��[�HψX�[ۈ��\���������\�X[�H��[X\�H�ې�X��^�YX�[۟O��X�ۈ^�K�\�H�^�O^�MH��܏H�ٙ���ψYX�[ۂ�Н����]���]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ��\X]
+]]�Y�]Z[�X^
+�Y��JH��\�M�_O����S��S����˛X\
+
+��
+HO��ۜ���X�[ۜ�H�[\�YX�[ۜ˙�[\�
+JHO�K��]\�OOH����^JN�]\��
+�]��^O^�����^_H�\�Ә[YOH�؋Z�[��[�X���ۑ�Y�ݙ\�^�JHO��K��]�[�Y�][
+
+N�K��\��[�\��]��\��\��Y
+��Y�[ݙ\��N�_Hۑ�Y�X]�O^�JHO�K��\��[�\��]��\��\���[[ݙJ��Y�[ݙ\��_Hۑ��^�JHO��K��\��[�\��]��\��\���[[ݙJ��Y�[ݙ\��N�[�R�[��[���
+����^JN�_H�[O^���X��ܛ�[��˜�\��X�K�ܙ\��Y]\ΈM�Y[�ΈM��ܙ\��\��Y	�˘�ܙ\�XZ[�ZY���_O��]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��[�\��X\��[����N�M�Y[�Л��N�L��ܙ\����N����Y	������ܟX_O���[��[O^���۝�^�N�L��۝�ZY��
+���܎������܋]\��X�[�Έ���[H�_O�����X�[O��[����[��[O^���۝�^�N�LK��܎�˝^[K�X��ܛ�[��˘��Y[�Έ��L��ܙ\��Y]\ΈNK�۝�ZY��
+�_O����X�[ۜ˛[��O��[����]������X�[ۜ˛X\
+
+X�[ۊHO��ۜ��HH�SԒUW���Ԕ��X�[ۋ��[ܚ]WN�ۜ�\�ݙ\�YHHX�[ۋ�YQ]H	��X�[ۋ��]\�OOH�ۙH�	���]�]JX�[ۋ�YQ]JH�]�]J
+N�]\��
+�]��^O^�X�[ۋ�YH�\�Ә[YOH�؋Z�[��[�X�\���Y��X�Hۑ�Y��\�^�JHO��[�Q�Y��\�
+X�[ۋ�Y
+N�K��\��[�\��]��\��\��Y
+��Y��[�ȊN�_Hۑ�Y�[�^�JHO�K��\��[�\��]��\��\���[[ݙJ��Y��[�Ȋ_H�[O^��Y[�ΈM�ܙ\��Y]\ΈL��X��ܛ�[��˘�\��ܙ\��\��Y	�\�ݙ\�YH�˜�Y
+����˘�ܙ\�X�\��܎��ܘX��X\��[����N�L_O��]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��[Yے][\Έ��^\�\��X\��[����N�
+�_O���[��[O^���۝�^�N�L�[�RZY��K��^�KX\��[��Y��_O��X�[ۋ�^O��[����[�ې�X��^�JHO��K�����Y�][ۊ
+N��]Y][��X�[ۊX�[ۊN�_H�[O^���\��܎���[�\���X�]N��K�^��[�Έ_O��X�ۈ^�K�Y]H�^�O^�MHς���[����]���]��[O^��\�^N���^��\�
+��^ܘ\��ܘ\�[Yے][\Έ��[�\��_O���Y�HX�[^��K�X�[H��܏^��K���ܟH��^��K���Hς��\�ݙ\�YH	���Y�HX�[H�ՑT�QH���܏^�˜�YH��^�˜�Y��HϟB��X�[ۋ�Y�˜�X�J�K�X\
+
+
+HO��Y�H�^O^�HX�[^�H��܏^�˘X��[�Y�H��^�˘X��[���Hϊ_B��X�[ۋ�YQ]H	���[��[O^���۝�^�N�LK��܎�\�ݙ\�YH�˜�Y�˝^[K\�^N���^�[Yے][\Έ��[�\���\��_O�X�ۈ^�K�����H�^�O^�L_H��܏^�\�ݙ\�YH�˜�Y�˝^[_Hψٛ]
+X�[ۋ�YQ]J_O��[��B��]����]���
+NJ_B����X�[ۜ˛[��OOH	��]��[O^��Y[�Έ�^[Yێ���[�\����܎�˝^[K�۝�^�N�L��ܙ\���\�Y	�˘�ܙ\�X�ܙ\��Y]\ΈLX\��[����_O��]��\�Ә[YOH�؋Y�Y�Z[���[O^����܎�˘X��[�Y��۝�ZY��
+L_O���\�O�]���]��[O^��X\��[���
+_O���][\��]����]��B��]���
+NJ_B��]����]���
+N��ۜ�[�Z�U�Y]�H
+
+HO�
+�]������\�X[�H�����ې�X��^�
+HO��]�Y]����\Ȋ_H�[O^��X\��[����N�M�_O��X�ۈ^�K�\����Y�H�^�O^�MHψ�X�Н�����[O^���۝�^�N����۝�ZY��
+�X\��[����N��\�^N���^�[Yے][\Έ��[�\���\�L_O��X�ۈ^�K�\�YH�^�O^̍H��܏^�˘X��[�HψY��B�����]��[O^��\�^N���^��\�X\��[����N���^ܘ\��ܘ\�_O�����^N��\�H�X�ێ�K�\�KX�[��\�H�\H�K���^N���X�ȋX�ێ�K��X��X�[�����H�X�ȈK���^N��\�Y�X�ێ�K�\�YX�[��\�Y�[H�K�K�X\
+
+X�HO�
+����^O^�X���^_H�\�X[�^�[�Z�S[�HOOHX���^H���[X\�H���Y�][�Hې�X��^�
+HO��][�Z�S[�JX���^J_H�[O^���۝�^�N�L�_O��X�ۈ^�X��X�۟H�^�O^�MH��܏^�[�Z�S[�HOOHX���^H��ٙ����˝^]]YHψ�X��X�[B�Н���
+J_B��]���]��[O^��Y[�Έ��ܙ\��Y]\ΈM�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X_O��]��[O^��X\��[����N�M_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�]H
+�[ۘ[
+O�X�[��[�]�[YO^�[�Z�U]_Hې�[��O^�JHO��][�Z�U]JK�\��]��[YJ_HX�Z�\�H�K�ˈ��[�[��[��8�%X\��
+H�ς��]�����[�Z�S[�HOOH�\�H�	��
+�]��[O^��X\��[����N�M_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�\�H܈\H[�\���\��X�[��^\�XH�[YO^�[�Z�P��_Hې�[��O^�JHO��][�Z�P��JK�\��]��[YJ_HX�Z�\�^Ȕ\�HYY][����\��X��Y\��Y�\�܈[�H^\�K�����\�\�H�Y����]Y�ܚ\�K[�[�\��\�[���]��X�[ۈ][N��	��Ή�܈	��I��[�H]]�Y^�X�Y��H�[O^��Z[�ZY���_Hς��]���
+_B���[�Z�S[�HOOH��X�Ȉ	��
+�]��[O^��X\��[����N�M_O��]��[O^��Y[�ΈM��ܙ\��Y]\ΈL�X��ܛ�[��˘X��[����ܙ\��\��Y	�˘X��[�L�X\��[����N�M_O��]��[O^���۝�^�N�L���܎�˘X��[�Y��۝�ZY��
+�X\��[����N�
+_O��X��[\ܝ�]���]��[O^���۝�^�N�L���܎�˝^]]Y[�RZY��K�H_O����HY\��Y�\����H�X��[�\�H�[�ˈH�X[�\��[�ܛX]�XZ�\��[Y\���\[[ښH��\�[�^�X�X�[ۈ][\˂��]����]���^\�XH�[YO^�[�Z�P��_Hې�[��O^�JHO��][�Z�P��JK�\��]��[YJ_HX�Z�\�^Ȕ\�H�X��Y\��Y�\�\�K�����K�˗����L��SW�^HX[K\]H���H�Y[��[��H^H�[�U��H[�وX\���H�Έ�[��]�\�Y[Y[[�H�H�[O^��Z[�ZY���_Hς��]���
+_B���[�Z�S[�HOOH�\�Y�	��
+�]��[O^��X\��[����N�M_O��]�ۑ�Y�ݙ\�^�JHO�K��]�[�Y�][
+
+_Hۑ��^�[�Q��Hې�X��^�
+HO��[R[�]�Y���\��[�˘�X��
+_H�[O^��Y[�Έ��ܙ\��Y]\ΈL�ܙ\���\�Y	�˘�ܙ\�X^[Yێ���[�\��X\��[����N�M�\��܎���[�\���[��][ێ���ܙ\�X��܈�M\Ȉ_Hۑ�Y�[�\�^�JHO��K��\��[�\��]��[K��ܙ\���܈H˘X��[��_Hۑ�Y�X]�O^�JHO��K��\��[�\��]��[K��ܙ\���܈H˘�ܙ\��_O��X�ۈ^�K�\�YH�^�O^�̟H��܏^�˝^[_H�[O^��X\��[���]]�L��\�^N�����Ȉ_Hς�]��[O^���۝�^�N�L���܎�˝^]]YX\��[����N�
+_O��X��܈��H���Y�[H\�O�]���]��[O^���۝�^�N�LK��܎�˝^[H_O��[H�۝[���[\X\��[���܈�]�Y]��]����]���[�]�Y�^ٚ[R[�]�Y�H\OH��[H�X��\H���Y�^�X\���ۈ�ې�[��O^�[�Q�[U\�YH�[O^��\�^N���ۙH�_Hς�^\�XH�[YO^�[�Z�P��_Hې�[��O^�JHO��][�Z�P��JK�\��]��[YJ_HX�Z�\�H�܈\�H�[H�۝[��\�K�����[O^��Z[�ZY��M�_Hς��]���
+_B��]��[O^��\�^N���^��\��X\��[����N��_O��X�[�[O^��\�^N���^�[Yے][\Έ��[�\���\��۝�^�N�L���܎�˝^]]Y�\��܎���[�\��_O��[�]\OH��X�؛���X��Y^�[�Z�P]]��X[�Hې�[��O^�
+HO��][�Z�P]]��X[�Z[�Z�P]]��X[�_H�[O^��X��[���܎�˘X��[�_Hψ]]�X�X[�	��ܛX]��X�[��X�[�[O^��\�^N���^�[Yے][\Έ��[�\���\��۝�^�N�L���܎�˝^]]Y�\��܎���[�\��_O��[�]\OH��X�؛���X��Y^�[�Z�P]]�^�X�Hې�[��O^�
+HO��][�Z�P]]�^�X�
+Z[�Z�P]]�^�X�
+_H�[O^��X��[���܎�˘X��[�_Hψ^�X�X�[ۈ][\�X�[���]�����[�Z�P��K��[J
+H	��[�Z�P]]��X[�	��
+
+
+HO��ۜ��X[�Y^H�X[���J[�Z�P��JN�ۜ��]�[�\�H[�Z�P��K��[J
+K��]
+���K�[���ۜ��X[�[�\�H�X[�Y^��]
+���K��[\�O���[J
+JK�[���ۜ��[[ݙYH�]�[�\�H�X[�[�\��ۜ��]��ܙ�H[�Z�P��K��[J
+K��]
+����K�[���ۜ��X[��ܙ�H�X[�Y^��]
+����K�[���ۜ���YX�[ۈH�]��ܙ���X]���[�
+
+
+�]��ܙ�H�X[��ܙ�H��]��ܙ�H
+�L
+H��]\��
+�]��[O^��X\��[����N��_O���ʈ�X[�[���]��\�
+��B�]��[O^��\�^N���^��\�M�X\��[����N�LY[�Έ�L���ܙ\��Y]\Έ�X��ܛ�[��˘X��[����۝�^�N�LK��܎�˘X��[�Y�[Yے][\Έ��[�\��_O���[��[O^���۝�ZY��
+�_O��X[�[���\�[Ώ��[����[��ܘ]��ܙ�H8�����X[��ܙ�H�ܙ�
+���YX�[۟IHY�\�O��[���ܙ[[ݙY�	���[��ܙ[[ݙYH��\�H[�\��[[ݙY��[��B��]����ʈ�YH�H�YH
+��B�]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ�Y��Y����\�L_O��]���]��[O^���۝�^�N�LK��܎�˝^[KX\��[����N�
+��۝�ZY��
+�_O��U�S�U�]���]��[O^��Y[�ΈL��ܙ\��Y]\ΈL�X��ܛ�[��˘���ܙ\��\��Y	�˘�ܙ\�XX^ZY����ݙ\���Έ�]]ȋ�۝�^�N�L��]T�X�N���K]ܘ\���܎�˝^[K[�RZY��K�H_O���[�Z�P��K��[J
+_B��]����]���]���]��[O^���۝�^�N�LK��܎�˙ܙY[�X\��[����N�
+��۝�ZY��
+�_O��PS�Q�UU�]���]��[O^��Y[�ΈL��ܙ\��Y]\ΈL�X��ܛ�[��˜�\��X�K�ܙ\��\��Y	�˙ܙY[�L�X^ZY����ݙ\���Έ�]]Ȉ_O���X���H^^��X[�Y^Hς��]����]����]����[�Z�P]]�^�X�	��^�X�X�[ۜ��X[�Y^
+K�[���	��
+�]��[O^��X\��[���L_O��]��[O^���۝�^�N�L���܎�˘[X�\�X\��[����N�
+�_O�]X�YX�[ۈ][\Ώ�]����^�X�X�[ۜ��X[�Y^
+K�X\
+
+][KJHO�
+�]��^O^�_H�[O^���۝�^�N�L���܎�˝^Y[�Έ��Y[��Y��L��ܙ\�Y�����Y	�˘[X�\�X_O��][_O�]���
+J_B��]���
+_B��]���
+NJJ
+_B��[�Z�P��K��[J
+H	��Z[�Z�P]]��X[�	��
+�]��[O^��X\��[����N��_O��]��[O^���۝�^�N�L���܎�˝^]]YX\��[����N�_O��]�Y]�
+�]����X[�[��O�]���]��[O^��Y[�ΈM�ܙ\��Y]\ΈL�X��ܛ�[��˜�\��X�K�ܙ\��\��Y	�˘�ܙ\�XX^ZY���ݙ\���Έ�]]ȋ�]T�X�N���K]ܘ\��۝�^�N�L�[�RZY��K��_O���[�Z�P��K��[J
+_B��]����]���
+_B����\�X[�H��[X\�H�ې�X��^�[�T�]�S��_H\�X�Y^�Z[�Z�P��K��[J
+_H�[O^���Y��L	H��\�Y�P�۝[����[�\��Y[�Έ�L��_O��X�ۈ^�K��X��H�^�O^�MH��܏H�ٙ���ψ�]�H��B�Н����]����]���
+N���8� 8� [�[�8� 8� ��ۜ�Y]X�[ۓ[�[H
+
+HO�Y�
+YY][��X�[ۊH�]\���[�ۜ�HHY][��X�[ێ�]\��
+�]��\�Ә[YOH�؋[[�[[ݙ\�^H��[O^����][ێ���^Y�[��]��X��ܛ�[����ؘJ��H��X�����[\����\�
+
+H�\�^N���^�[Yے][\Έ��[�\���\�Y�P�۝[����[�\���[�^�L_Hې�X��^�
+HO��]Y][��X�[ۊ�[
+_O��]��\�Ә[YOH�؋[[�[X�۝[��ې�X��^�JHO�K�����Y�][ۊ
+_H�[O^���Y�
+�X^�Y��L�ȋY[�Έ��ܙ\��Y]\ΈN�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X���Y�Έ��
+�ؘJ�JH�_O����[O^���۝�^�N�M��۝�ZY��
+�X\��[����N�M�_O�Y]X�[ۏ�ς�]��[O^��X\��[����N�L�_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�\�ܚ\[ۏ�X�[��^\�XH�[YO^�K�^Hې�[��O^�JHO��]Y][��X�[ۊ����K^�K�\��]��[YHJ_H�[O^��Z[�ZY��_Hς��]���]��[O^��\�^N��ܚY�ܚY[\]P��[[�Έ�Y��Y����\�L�X\��[����N�L�_O��]���X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O��[ܚ]O�X�[���[X��[YO^�K��[ܚ]_Hې�[��O^�JHO��]Y][��X�[ۊ����K�[ܚ]N�K�\��]��[YHJ_O���[ۈ�[YOH�Y���Y���[ۏ��[ۈ�[YOH�YY][H��YY][O��[ۏ��[ۈ�[YOH��ȏ�����[ۏ����[X����]���]���X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�YH]O�X�[��[�]\OH�]H��[YO^�K�YQ]_Hې�[��O^�JHO��]Y][��X�[ۊ����KYQ]N�K�\��]��[YHJ_Hς��]����]���]��[O^��X\��[����N�M�_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�Y��
+��[XK\�\\�]Y
+O�X�[��[�]�[YO^�K�Y�˚��[���_Hې�[��O^�JHO��]Y][��X�[ۊ����KY�ΈK�\��]��[YK��]
+��K�X\
+
+
+HO���[J
+K����\��\�J
+JK��[\����X[�HJ_HX�Z�\�H���ڙX��\��[��ς��]���]��[O^��\�^N���^��\�Y�P�۝[����X�KX�]�Y[��_O�����\�X[�H�[��\��ې�X��^�
+HO��[]PX�[ۊK�Y
+N��]Y][��X�[ۊ�[
+N�_O��X�ۈ^�K��\�H�^�O^�L�H��܏^�˜�YHψ[]B�Н���]��[O^��\�^N���^��\�_O����ې�X��^�
+HO��]Y][��X�[ۊ�[
+_O��[��[Н������\�X[�H��[X\�H�ې�X��^�
+HO��\]PX�[ۊK�Y�^�K�^�[ܚ]N�K��[ܚ]KYQ]N�K�YQ]KY�ΈK�Y��JN��]Y][��X�[ۊ�[
+N�_O��]�OН����]����]����]����]���
+NN��ۜ�Y]��S[�[H
+
+HO�Y�
+YY][�ӛ�JH�]\���[�]\��
+�]��\�Ә[YOH�؋[[�[[ݙ\�^H��[O^����][ێ���^Y�[��]��X��ܛ�[����ؘJ��H��X�����[\����\�
+
+H�\�^N���^�[Yے][\Έ��[�\���\�Y�P�۝[����[�\���[�^�L_Hې�X��^�
+HO��]Y][�ӛ�J�[
+_O��]��\�Ә[YOH�؋[[�[X�۝[��ې�X��^�JHO�K�����Y�][ۊ
+_H�[O^���Y�
+�X^�Y��L�ȋX^ZY�����Y[�Έ��ܙ\��Y]\ΈN�X��ܛ�[��˘�\��ܙ\��\��Y	�˘�ܙ\�X\�^N���^��^\�X�[ێ����[[�����Y�Έ��
+�ؘJ�JH�_O����[O^���۝�^�N�M��۝�ZY��
+�X\��[����N�M�_O�Y]��O�ς�]��[O^��X\��[����N�L�_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O�]O�X�[��[�]�[YO^�Y][�ӛ�K�]_Hې�[��O^�JHO��]Y][�ӛ�J����Y][�ӛ�K]N�K�\��]��[YHJ_Hς��]���]��[O^��X\��[����N�M��^�H_O��X�[�[O^���۝�^�N�L���܎�˝^]]Y\�^N�����ȋX\��[����N�
+�_O���O�X�[��^\�XH�[YO^�Y][�ӛ�K���_Hې�[��O^�JHO��]Y][�ӛ�J����Y][�ӛ�K��N�K�\��]��[YHJ_H�[O^��Z[�ZY���_Hς��]���]��[O^��\�^N���^��\�Y�P�۝[����^Y[���\�_O����ې�X��^�
+HO��]Y][�ӛ�J�[
+_O��[��[Н������\�X[�H��[X\�H�ې�X��^�[�U\]S��_O��]�H�[��\�Н����]����]����]���
+NN���8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d���VS�U���8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d8�d��]\��
+�]��[O^��Z[�ZY���L���X��ܛ�[��˘����܎�˝^�۝�[Z[N�	�X\K\�\�[K�[��XX��\�[Q�۝��Y��HRH��؛���[��\�\�Y��_O���[O����^Y��[Y\��YR[�����H��X�]N���[�ٛܛN��[��]VJ
+N�H���X�]N�N��[�ٛܛN��[��]VJ
+N�HB��^Y��[Y\��YU\����H��X�]N���[�ٛܛN��[��]VJM�
+N�H���X�]N�N��[�ٛܛN��[��]VJ
+N�HB��^Y��[Y\�[�H�	KL	H��X�]N�N�H
+L	H��X�]N����HB��^Y��[Y\��\�[�����H��X�]N���[�ٛܛN��[��]VJ�
+H��[J�MJN�H���X�]N�N��[�ٛܛN��[��]VJ
+H��[JJN�HB��^Y��[Y\��\��]����H��X�]N�N�H���X�]N���[�ٛܛN��[��]VJL
+N�HB��^Y��[Y\��[[Y\��	H��X��ܛ�[�\��][ێ�L�	H�HL	H��X��ܛ�[�\��][ێ��	H�HB��^Y��[Y\��ܙ\�����	KL	H��ܙ\�X��܎��ؘJM��L�K�L��N�H
+L	H��ܙ\�X��܎��ؘJM��L�K�L�JN�HB�
+����\�^�[�Έ�ܙ\�X���B���]�X��]\�ܛ��\���Y�
+��ZY��
+��B���]�X��]\�ܛ��\�]�X����X��ܛ�[���[��\�[��B���]�X��]\�ܛ��\�][X���X��ܛ�[��̘L�����ܙ\�\�Y]\Έ��B���]�X��]\�ܛ��\�][X��ݙ\���X��ܛ�[����Lٍ�B����[X�[ۈ��X��ܛ�[���ؘJM��L�K�L��N���܎�ٙ���B��؋X�\���[��][ێ�[���X\�N�B��؋X�\��ݙ\���[�ٛܛN��[��]VJL�
+N��ܙ\�X��܎��ؘJM��L�K�L��JHZ[\ܝ[����\�Y�Έ��ؘJ��K\�ؘJM��L�K�L�JN�B��؋\�]X�\���[��][ێ�[��\�X\�N���][ێ��[]]�N�ݙ\���ΈY[��B��؋\�]X�\����Y�ܙH��۝[��	�����][ێ�X���]N����Y����Y���ZY�����X��ܛ�[���\�K\�]X��܊N��X�]N���[��][ێ��X�]H��\��B��؋\�]X�\��ݙ\���[�ٛܛN��[��]VJL�
+N���\�Y�ΈL���ؘJ��JN�B��؋\�]X�\��ݙ\����Y�ܙH��X�]N�N�B��؋X����[��][ێ�[�M\�X\�HZ[\ܝ[��B��؋X���ݙ\���[\����Y��\��K�MJN��[�ٛܛN��[��]VJL\
+N�B��؋X���X�]�H��[�ٛܛN��[��]VJ
+N��[\����Y��\���MJN�B��؋X��\�[X\�N�ݙ\����\�Y�Έ
+M��ؘJM��L�K�L��JN�B��؋[�]�Z][H��[��][ێ�[�M\�X\�N�B��؋[�]�Z][N�ݙ\���X��ܛ�[���ؘJM��L�K�L�
+�HZ[\ܝ[����܎����Y�Z[\ܝ[��B��؋Z[�]����\���ܙ\�X��܎���
+��Z[\ܝ[����\�Y�Έ��ؘJNL�L̋�L��L�N�B��؋Z�[��[�X�\���[��][ێ�[���X\�N�B��؋Z�[��[�X�\��ݙ\���[�ٛܛN��[��]VJL�
+N���\�Y�Έ
+���ؘJ��N�B��؋Z�[��[�X�\���Y��[����X�]N��N��[�ٛܛN���]J�Y�N�B��؋Z�[��[�X����[��][ێ��X��ܛ�[����X\�N�B��؋Z�[��[�X����Y�[ݙ\���X��ܛ�[���ؘJM��L�K�L�
+�HZ[\ܝ[��B��؋X�Y�H��[��][ێ�[�M\�X\�N�B��؋X�Y�N�ݙ\���[\����Y��\��K��N�B��؋[[�[[ݙ\�^H�[�[X][ێ��YR[��M\�X\�N�B��؋[[�[X�۝[��[�[X][ێ��YU\��\�X\�N�B��؋]Y�X�\��[��][ێ�[�M\�X\�N�B��؋]Y�X�\�ݙ\���[�ٛܛN���[JK�
+JN�B��؋\�YX�\���X����Y�[\���\�L�
+N��X��ܛ�[���ؘJN�K��MJHZ[\ܝ[��B��؋\�X\����[��][ێ�[���X\�N�B��؋\�X\������\�]�][����\�Y�Έ��ؘJNL�L̋�L��JN��ܙ\�X��܎���
+���B��؋Y�Y�Z[���X�]N���[��][ێ��X�]H���X\�N�B��؋Z�[��[�X����Y�[ݙ\��؋Y�Y�Z[���X�]N�N�B�O��[O����ʈY[�[\ܝ[�]
+��B�[�]�Y�^�[\ܝ[�]�Y�H\OH��[H�X��\H����ۈ�ې�[��O^�[�R[\ܝH�[O^��\�^N���ۙH�_Hς���ʈ[ؚ[H[X�\��\�
+��B�]�ې�X��^�
+HO��]�YX�\��[�\�YX�\��[�_H�[O^����][ێ���^Y���L�Y��L��[�^���\��܎���[�\��Y[�Έ
+��ܙ\��Y]\Έ�X��ܛ�[��˜�\��X�K�ܙ\��\��Y	�˘�ܙ\�X\�^N��YX�\��[����ۙH������Ȉ_O��X�ۈ^�K��[��[�H�^�O^̌H��܏^�˘X��[�Hς��]�����ʈ�YX�\�
+��B���YX�\��[�	��
+�]��\�Ә[YOH�؋\�YX�\���[O^���Y����ܙ\��Y��\��Y	�˘�ܙ\�X\�^N���^��^\�X�[ێ����[[��Y[�Έ�M����][ێ���^Y���Y�����N��[�^�L_O��]��[O^��Y[�Έ����\�^N���^�[Yے][\Έ��[�\���\�Y�P�۝[����X�KX�]�Y[���ܙ\����N�\��Y	�˘�ܙ\�XX\��[����N�_O��]��[O^��\�^N���^�[Yے][\Έ��[�\���\�L_O��X�ۈ^�K���Z[�H�^�O^̌�H��܏^�˘X��[�Hς��[��[O^���۝�^�N�MK�۝�ZY��
+���܎�˝^_O��X�ۙ��Z[���[����]����[�ې�X��^�
+HO��]�YX�\��[��[�J_H�[O^���\��܎���[�\���X�]N��H_O��X�ۈ^�K�H�^�O^�MHς���[����]�������^N��\���\��X�ێ�K���Z[�X�[��\���\��X]��
+�HO��OOH�\���\��K���^N����\ȋX�ێ�K���KX�[����\ȋX]��
+�HO��OOH���\Ȉ�OOH���Q]Z[�K���^N���[��[��X�ێ�K��[��[�X�[��X�[ۈ��\��X]��
+�HO��OOH��[��[��K���^N��[�Z�H�X�ێ�K�\�YX�[��Y��H�X]��
+�HO��OOH�[�Z�H�K�K�X\
+
+�]�HO��ۜ�X�]�HH�]��X]�
+�Y]�N�]\��
+�]��^O^ۘ]���^_H�\�Ә[YOH�؋[�]�Z][H�ې�X��^�
+HO��]�Y]��]���^J_H�[O^��\�^N���^�[Yے][\Έ��[�\���\�LY[�Έ�L���\��܎���[�\���۝�^�N�L��۝�ZY��X�]�H�
+��
+��܎�X�]�H�˘X��[�Y��˝^]]Y�X��ܛ�[��X�]�H�˘X��[������[��\�[���ܙ\�Y��X�]�H����Y	�˘X��[�X�����Y�[��\�[��]\��X�[�ΈX�]�H���Y[H��_O��X�ۈ^ۘ]��X�۟H�^�O^�M�H��܏^�X�]�H�˘X��[�Y��˝^]]YHψۘ]��X�[B��]���
+NJ_B���ʈ]H�۝���
+��B�]��[O^��Y[�Έ�L�M���ܙ\���\��Y	�˘�ܙ\�XX\��[���L�_O��]��[O^���۝�^�N�LK��܎�˝^[KX\��[����N�_O�UO�]���]��[O^��\�^N���^��\�
+��^ܘ\��ܘ\�_O�����\�X[�H�����ې�X��^�[�Q^ܝH�[O^���۝�^�N�LH_H]OH���
+�H���X�ۈ^�K��ۛ�YH�^�O^�L�Hψ^ܝ�Н������\�X[�H�����ې�X��^�
+HO�[\ܝ[�]�Y���\��[�˘�X��
+_H�[O^���۝�^�N�LH_H]OH���
+�H���X�ۈ^�K�\�YH�^�O^�L�Hψ[\ܝ�Н������\�X[�H�����ې�X��^�
+HO��]����ܝ�]��YJ_H�[O^���۝�^�N�LH_H]OH��\��ȏ��X�ۈ^�K��^X��\�H�^�O^�L�Hψ�^\Н����]����]�����ʈY��[\�
+��B�]��[O^��X\��[����]]ȋY[�Έ�L�M���ܙ\���\��Y	�˘�ܙ\�XX^ZY���ݙ\���Έ�]]Ȉ_O��]��[O^���۝�^�N�LK��܎�˝^[KX\��[����N�\�^N���^�[Yے][\Έ��[�\���\�
+�_O��X�ۈ^�K�Y�H�^�O^�L�HψQ��]���]��[O^��\�^N���^��^ܘ\��ܘ\��\�
+_O���[Y�˛X\
+
+
+HO�
+��[��^O^�H�\�Ә[YOH�؋]Y�X�\�ې�X��^�
+HO��]�[X�YY��
+�]�HO��]��[��Y\�
+H��]���[\�
+
+HO�OOH
+H�ˋ���]�J_H�[O^��Y[�Έ��\��ܙ\��Y]\ΈNK�۝�^�N�L�۝�ZY��
+L�\��܎���[�\���X��ܛ�[���[X�YY�˚[��Y\�
+H�˘X��[����˘����܎��[X�YY�˚[��Y\�
+H�˘X��[�Y��˝^[K�ܙ\��\��Y	��[X�YY�˚[��Y\�
+H�˘X��[�
+����˘�ܙ\�X_O���B���[���
+J_B���[X�YY�˛[���	��
+��[�ې�X��^�
+HO��]�[X�YY���J_H�[O^��Y[�Έ����ܙ\��Y]\ΈNK�۝�^�N�LK�\��܎���[�\����܎�˜�Y�X��ܛ�[��˜�Y��_O��X\���[���
+_B��]����]����]���
+_B���ʈXZ[��۝[�
+��B�]��[O^��X\��[�Y���YU�Y[�Έ��̜�X^�Y�LL�[��][ێ��X\��[�[Y���Ȉ_O���ʈ�X\���\�
+��B�]��[O^��X\��[����N����][ێ���[]]�H�_O��X�ۈ^�K��X\��H�^�O^�M�H��܏^�˝^[_H�[O^����][ێ��X���]H�Y��L���L_Hς�[�]�Y�^��X\���Y�H�[YO^��X\��]Y\�_Hې�[��O^�JHO��]�X\��]Y\�JK�\��]��[YJ_HX�Z�\�H��X\����\�[�X�[ۜ��)�
+��
+��H��[O^��Y[��Y��͋�X��ܛ�[��˘�\�_Hς���X\��]Y\�H	���[�ې�X��^�
+HO��]�X\��]Y\�J��_H�[O^����][ێ��X���]H��Y��L���L�\��܎���[�\��_O�X�ۈ^�K�H�^�O^�MHϏ��[��B��]������X\��]Y\�H�[X�YY�˛[���
+H	��
+�]��[O^��\�^N���^��\�
+�X\��[����N�M��^ܘ\��ܘ\�[Yے][\Έ��[�\��_O���[��[O^���۝�^�N�L���܎�˝^[H_O��[\�Ώ��[�����X\��]Y\�H	���Y�HX�[^����X\��]Y\�_H�H��܏^�˝^H��^�˜�\��X�_H۔�[[ݙO^�
+HO��]�X\��]Y\�J��_HϟB���[X�YY�˛X\
+
+
+HO��Y�H�^O^�HX�[^�H��܏^�˘X��[�Y�H��^�˘X��[���H۔�[[ݙO^�
+HO��]�[X�YY��
+
+HO���[\�
+
+HO�OOH
+J_Hϊ_B��]���
+_B��ݚY]�OOH�\���\��	��\���\��Y]�ϟB�ݚY]�OOH���\Ȉ	����\՚Y]�ϟB�ݚY]�OOH���Q]Z[�	����Q]Z[�Y]�ϟB�ݚY]�OOH��[��[��	���[��[��Y]�ϟB�ݚY]�OOH�[�Z�H�	��[�Z�U�Y]�ϟB��]����Y]X�[ۓ[�[ς�Y]��S[�[ς������ܝ�]�	���ܝ�][ې���O^�
+HO��]����ܝ�]��[�J_HϟB���\�	���\�Y\��Y�O^��\�HۑۙO^�
+HO��]�\�
+�[
+_HϟB���ۙ�\�QX[��	���ۙ�\�QX[��Y\��Y�O^��ۙ�\�QX[�˛Y\��Y�_Hې�ۙ�\�O^��ۙ�\�QX[�˛ې�ۙ�\�_Hې�[��[^�
+HO��]�ۙ�\�QX[���[
+_HϟB��]���
+NB
