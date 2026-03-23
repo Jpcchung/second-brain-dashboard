@@ -72,3 +72,10 @@ A personal knowledge management dashboard for capturing meeting notes and tracki
                                                           - ## License
                                                          
                                                           - MIT
+
+## Cosmic Spin Plan
+
+A scoped implementation plan for building the proposed multiplayer game show prototype is available at:
+
+- [`docs/cosmic-spin-implementation-plan.md`](docs/cosmic-spin-implementation-plan.md)
+
